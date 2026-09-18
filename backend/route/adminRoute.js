@@ -17,7 +17,11 @@ import {
     updateScreenDetails,
     deleteScreen,
 } from '../controller/venueController.js'
-import { createEvent } from '../controller/eventController.js'
+import {
+    createEvent,
+    updateEvent,
+    deleteEvent,
+} from '../controller/eventController.js'
 
 const router = express.Router()
 
@@ -67,8 +71,9 @@ router.delete(
     deleteScreen,
 )
 
-// Event Route:
+// Event Admin Route:
 // Flow: protect (token) -> admin (role) -> upload.single (parse multipart + save file) -> createEvent
 router.post('/events', protect, admin, upload.single('poster'), createEvent)
-
+router.put('/events/:id', protect, admin, upload.single('poster'), updateEvent)
+router.delete('/events/:id', protect, admin, deleteEvent)
 export default router
