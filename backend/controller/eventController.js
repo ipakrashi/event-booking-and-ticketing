@@ -1,6 +1,7 @@
 // backend/controller/eventController.js
 import asyncHandler from 'express-async-handler'
 import Event from '../model/event.js'
+import { log } from 'console'
 
 // ==================================
 //  @desc :     Create New Event by Admin
@@ -101,7 +102,81 @@ export const createEvent = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Get Listed Events
+//  @desc :     Get Public Events Catalog
 //  @route:     GET /api/events
 //  @access:    Public
 // ==================================
+export const getAllEvents = asyncHandler(async (req, res) => {
+    const { categoryId, status } = req.query
+
+    // 1. Base filter: exclude internal organizer drafts
+    const filter = {
+        status: { $ne: 'draft' },
+    }
+
+    // 2. Allow clients to filter by specific public statuses (e.g., ?status=published)
+    if (status && status !== 'draft') {
+        filter.status = status
+    }
+
+    // 3. Category filter
+    if (categoryId) {
+        filter.categoryId = categoryId
+    }
+
+    const allEvents = await Event.find(filter)
+        .populate('categoryId', 'name')
+        .populate('venueId', 'name address city')
+        .populate('organizerId', 'name email')
+        .sort({ startDate: 1 })
+
+    res.status(200).json({
+        success: true,
+        count: allEvents.length,
+        data: allEvents,
+    })
+})
+
+// ==================================
+//  @desc :     Get Public Events Catalog by Event Id
+//  @route:     GET /api/events/:id
+//  @access:    Public
+// ==================================
+export const getEventById = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    console.log(id)
+
+    const selectedEvent = await Event.findOne({
+        _id: id,
+        status: { $ne: 'draft' },
+    })
+        .populate('categoryId', 'name')
+        .populate('venueId', 'name address city auditoriums')
+        .populate('organizerId', 'name email')
+
+    if (!selectedEvent) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    // Locate the specific auditorium subdocument inside venueId
+    const selectedAuditorium = selectedEvent.venueId?.auditoriums?.id(
+        selectedEvent.auditoriumId,
+    )
+
+    // Locate the specific screen subdocument inside that auditorium
+    const selectedScreen = selectedAuditorium?.screens?.id(
+        selectedEvent.screenId,
+    )
+
+    const outputEvent = {
+        ...selectedEvent.toObject(),
+        selectedAuditorium: selectedAuditorium || null,
+        selectedScreen: selectedScreen || null,
+    }
+
+    res.status(200).json({
+        success: true,
+        data: outputEvent,
+    })
+})

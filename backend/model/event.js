@@ -102,7 +102,13 @@ const eventSchema = new mongoose.Schema(
         },
         status: {
             type: String,
-            enum: ['draft', 'published', 'sold_out', 'cancelled'],
+            enum: [
+                'draft',
+                'coming_soon',
+                'published',
+                'sold_out',
+                'cancelled',
+            ],
             default: 'draft',
             index: true,
         },
