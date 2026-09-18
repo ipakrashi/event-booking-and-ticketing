@@ -99,3 +99,9 @@ export const createEvent = asyncHandler(async (req, res) => {
 
     res.status(201).json({ success: true, data: event })
 })
+
+// ==================================
+//  @desc :     Get Listed Events
+//  @route:     GET /api/events
+//  @access:    Public
+// ==================================
