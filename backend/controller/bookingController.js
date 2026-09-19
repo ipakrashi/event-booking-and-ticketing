@@ -494,3 +494,127 @@ export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
         modifiedCount: result.modifiedCount,
     })
 })
+
+// ==================================
+//  @desc :     Cancel Booking & Rollback Inventory
+//  @route:     PUT /api/bookings/:id/cancel
+//  @access:    Private (Customer / Organizer / Admin)
+// ==================================
+export const cancelBooking = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { cancelledQty, cancellationReason } = req.body
+
+    // 1. Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    // 2. Validate payload structure
+    const parsedQty = Number(cancelledQty)
+    if (!parsedQty || !Number.isInteger(parsedQty) || parsedQty <= 0) {
+        res.status(400)
+        throw new Error('Valid cancel quantity is required')
+    }
+
+    // 3. Find booking & populate event organizer
+    const bookingDetails = await Booking.findById(id).populate(
+        'event',
+        'organizerId',
+    )
+
+    if (!bookingDetails) {
+        res.status(404)
+        throw new Error('Booking Details Not Found')
+    }
+
+    // 4. Ownership verification
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOwner =
+        bookingDetails.event?.organizerId?.toString() ===
+        req.user._id.toString()
+    const isCustomer =
+        bookingDetails.user.toString() === req.user._id.toString()
+
+    if (!isCustomer && !isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error(
+            'You are not authorized to cancel tickets for an event you do not own',
+        )
+    }
+
+    // 5. State guards
+    if (
+        bookingDetails.despatchStatus === 'dispatched' ||
+        bookingDetails.despatchStatus === 'received'
+    ) {
+        res.status(400)
+        throw new Error(
+            `Cannot cancel tickets that have already been ${bookingDetails.despatchStatus} for this event`,
+        )
+    }
+
+    const nonCancellableStatuses = [
+        'rejected',
+        'cancelled',
+        'full_refund_issued',
+        'partial_refund_issued',
+    ]
+    if (nonCancellableStatuses.includes(bookingDetails.bookingStatus)) {
+        res.status(400)
+        throw new Error(
+            `Cannot cancel tickets that are currently marked as ${bookingDetails.bookingStatus}`,
+        )
+    }
+
+    // Full cancellation policy guard
+    if (parsedQty !== bookingDetails.bookedQty) {
+        res.status(400)
+        throw new Error(
+            `Partial cancellations are not supported. Tickets Booked: ${bookingDetails.bookedQty}, Cancellation Requested: ${parsedQty}`,
+        )
+    }
+
+    // 6. ATOMIC INVENTORY ROLLBACK
+    const eventId = bookingDetails.event._id || bookingDetails.event
+    const updatedEvent = await Event.findOneAndUpdate(
+        {
+            _id: eventId,
+            'ticketTiers._id': bookingDetails.ticketTierId,
+        },
+        {
+            $inc: { 'ticketTiers.$.soldQuantity': -parsedQty },
+        },
+        {
+            new: true,
+            runValidators: true,
+        },
+    )
+
+    if (!updatedEvent) {
+        res.status(500)
+        throw new Error(
+            'Failed to restore ticket inventory during cancellation',
+        )
+    }
+
+    // 7. Update booking audit and state fields
+    bookingDetails.cancelledQty = parsedQty
+    bookingDetails.cancellationReason = cancellationReason || 'Not specified'
+    bookingDetails.refundAmount = parsedQty * bookingDetails.unitPrice
+    bookingDetails.bookingStatus = 'cancelled'
+
+    if (bookingDetails.paymentStatus === 'paid') {
+        bookingDetails.paymentStatus = 'refund_requested'
+    }
+
+    // 8. Persist to MongoDB
+    const updatedBooking = await bookingDetails.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Booking cancelled and ticket inventory restored successfully',
+        data: updatedBooking,
+    })
+})

@@ -10,6 +10,7 @@ import {
     updateDispatchStatus,
     updateReceiveStatus,
     bulkUpdateReceiveStatus,
+    cancelBooking,
 } from '../controller/bookingController.js'
 
 const router = express.Router()
@@ -39,5 +40,6 @@ router.put(
     updateDispatchStatus,
 )
 router.put('/:id/receive', protect, updateReceiveStatus)
+router.put('/:id/cancel', protect, cancelBooking)
 
 export default router

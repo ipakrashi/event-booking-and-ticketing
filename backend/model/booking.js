@@ -40,6 +40,27 @@ const bookingSchema = new mongoose.Schema(
             required: [true, 'Total amount is required'],
             min: [0, 'Total amount cannot be negative'],
         },
+        // --- Audit & Rollback Fields ---
+        cancelledQty: {
+            type: Number,
+            default: 0,
+            min: [0, 'Cancelled quantity cannot be negative'],
+            validate: {
+                validator: Number.isInteger,
+                message: 'Cancelled quantity must be an integer',
+            },
+        },
+        refundAmount: {
+            type: Number,
+            default: 0,
+            min: [0, 'Refund amount cannot be negative'],
+        },
+        cancellationReason: {
+            type: String,
+            trim: true,
+            default: null,
+        },
+        // -------------------------------
         bookingStatus: {
             type: String,
             enum: {
@@ -58,7 +79,13 @@ const bookingSchema = new mongoose.Schema(
         paymentStatus: {
             type: String,
             enum: {
-                values: ['paid', 'pending_verification', 'not_paid'],
+                values: [
+                    'paid',
+                    'pending_verification',
+                    'not_paid',
+                    'refund_requested',
+                    'refunded',
+                ],
                 message: '{VALUE} is not a valid payment status',
             },
             default: 'not_paid',
