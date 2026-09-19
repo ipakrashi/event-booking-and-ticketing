@@ -58,7 +58,7 @@ const bookingSchema = new mongoose.Schema(
         paymentStatus: {
             type: String,
             enum: {
-                values: ['paid', 'not_paid'],
+                values: ['paid', 'pending_verification', 'not_paid'],
                 message: '{VALUE} is not a valid payment status',
             },
             default: 'not_paid',
@@ -78,10 +78,10 @@ const bookingSchema = new mongoose.Schema(
         despatchStatus: {
             type: String,
             enum: {
-                values: ['not_despatched', 'dispatched', 'received'],
+                values: ['not_dispatched', 'dispatched', 'received'],
                 message: '{VALUE} is not a valid despatch status',
             },
-            default: 'not_despatched',
+            default: 'not_dispatched',
         },
         despatchDetails: {
             courierName: {

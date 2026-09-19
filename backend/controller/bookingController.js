@@ -1,1 +1,496 @@
-// backend/controller/bookingController.js
+import asyncHandler from 'express-async-handler'
+import mongoose from 'mongoose'
+import Event from '../model/event.js'
+import Booking from '../model/booking.js'
+
+// ==================================
+//  @desc :     Create New Booking for an Event
+//  @route:     POST /api/bookings
+//  @access:    Private (Logged-in Users)
+// ==================================
+export const createBooking = asyncHandler(async (req, res) => {
+    const { eventId, ticketTierId, bookedQty } = req.body
+    const userId = req.user._id
+
+    // 1. Validate incoming payload structure & formats
+    if (!eventId || !ticketTierId || !bookedQty) {
+        res.status(400)
+        throw new Error('Please provide eventId, ticketTierId, and bookedQty')
+    }
+
+    if (
+        !mongoose.Types.ObjectId.isValid(eventId) ||
+        !mongoose.Types.ObjectId.isValid(ticketTierId)
+    ) {
+        res.status(400)
+        throw new Error('Invalid event or ticket tier ID format')
+    }
+
+    const requestedQty = Number(bookedQty)
+    if (!Number.isInteger(requestedQty) || requestedQty <= 0) {
+        res.status(400)
+        throw new Error('Booked quantity must be a positive integer')
+    }
+
+    // 2. Fetch the target event
+    const event = await Event.findById(eventId)
+    if (!event) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    // Guard: Support active sales and advance sales window
+    const bookableStatuses = ['published', 'coming_soon']
+    if (!bookableStatuses.includes(event.status)) {
+        res.status(400)
+        throw new Error(
+            `Ticket bookings are not active. Event status is: ${event.status}`,
+        )
+    }
+
+    // 3. Locate the requested ticket tier subdocument
+    const tier = event.ticketTiers.id(ticketTierId)
+    if (!tier) {
+        res.status(404)
+        throw new Error('Selected ticket tier does not exist for this event')
+    }
+
+    // ----------------------------------------------------
+    // 4. ATOMIC INVENTORY RESERVATION (COMPARE-AND-SWAP)
+    // ----------------------------------------------------
+
+    // Step A: In-memory capacity check against fetched snapshot
+    const remainingSeats = tier.totalQuantity - tier.soldQuantity
+
+    if (requestedQty > remainingSeats) {
+        res.status(400)
+        throw new Error(
+            `Only ${remainingSeats} ticket(s) remaining for tier "${tier.name}"`,
+        )
+    }
+
+    // Step B: Atomic write with version lock on soldQuantity
+    const updatedEvent = await Event.findOneAndUpdate(
+        {
+            _id: eventId,
+            ticketTiers: {
+                $elemMatch: {
+                    _id: ticketTierId,
+                    soldQuantity: tier.soldQuantity, // Optimistic concurrency guard
+                },
+            },
+        },
+        {
+            $inc: { 'ticketTiers.$.soldQuantity': requestedQty },
+        },
+        {
+            new: true,
+            runValidators: true,
+        },
+    )
+
+    // Step C: Handle collision if another purchase completed concurrently
+    if (!updatedEvent) {
+        res.status(409)
+        throw new Error(
+            'Seat availability changed while processing your request. Please retry your booking.',
+        )
+    }
+
+    // ----------------------------------------------------
+    // 5. COMPUTE FINANCIALS & FREEZE SNAPSHOT IN BOOKING
+    // ----------------------------------------------------
+    const unitPrice = tier.price
+    const totalAmount = unitPrice * requestedQty
+
+    const booking = await Booking.create({
+        user: userId,
+        event: eventId,
+        ticketTierId: tier._id,
+        tierName: tier.name,
+        unitPrice: unitPrice,
+        bookedQty: requestedQty,
+        totalAmount: totalAmount,
+        bookingStatus: 'request_sent',
+        paymentStatus: 'not_paid',
+        despatchStatus: 'not_despatched',
+    })
+
+    res.status(201).json({
+        success: true,
+        message: 'Booking request created successfully',
+        data: booking,
+    })
+})
+
+// ==================================
+//  @desc :     Get Logged-in User Bookings
+//  @route:     GET /api/bookings/my-bookings
+//  @access:    Private
+// ==================================
+export const getMyBookings = asyncHandler(async (req, res) => {
+    const bookings = await Booking.find({ user: req.user._id })
+        .populate('event', 'title startDate endDate venueId posterImage')
+        .sort({ createdAt: -1 })
+
+    res.status(200).json({
+        success: true,
+        count: bookings.length,
+        data: bookings,
+    })
+})
+
+// ==================================
+//  @desc :    Get All Bookings for a Specific Event (Attendee Roster)
+//  @route:     GET /api/bookings/event/:eventId
+//  @access:    Private/Admin/Organiser
+// ==================================
+export const getEventBookings = asyncHandler(async (req, res) => {
+    const { eventId } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+        res.status(400)
+        throw new Error('Invalid event ID format')
+    }
+
+    const event = await Event.findById(eventId)
+    if (!event) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    // Role extraction guard (handles populated role document or raw role string)
+    const userRole = req.user.role?.role || req.user.role
+
+    // Authorization & Ownership Verification
+    const isOwner =
+        event.organizerId &&
+        event.organizerId.toString() === req.user._id.toString()
+    const isAdmin = userRole === 'admin'
+
+    if (!isOwner && !isAdmin) {
+        res.status(403)
+        throw new Error(
+            'You are not authorized to view attendee records for an event you do not own',
+        )
+    }
+
+    const bookings = await Booking.find({ event: eventId })
+        .populate('user', 'userName email')
+        .sort({ createdAt: -1 })
+
+    // Summary metrics for the organizer dashboard
+    const summary = bookings.reduce(
+        (acc, b) => {
+            acc.totalTicketsSold += b.bookedQty
+            if (b.paymentStatus === 'paid') {
+                acc.totalRevenue += b.totalAmount
+            }
+            return acc
+        },
+        { totalTicketsSold: 0, totalRevenue: 0 },
+    )
+
+    res.status(200).json({
+        success: true,
+        count: bookings.length,
+        summary,
+        data: bookings,
+    })
+})
+
+// ==================================
+//  @desc :     Update Payment Status and details for a booking
+//  @route:     PUT /api/bookings/:id/pay
+//  @access:    Private
+// ==================================
+export const updatePaymentStatus = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { paymentAmount, paymentDetails } = req.body
+
+    // 1. Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    // 2. Validate incoming payload structure
+    if (!paymentAmount || !paymentDetails?.mode || !paymentDetails?.trxnId) {
+        res.status(400)
+        throw new Error(
+            'Please provide paymentAmount, paymentDetails.mode, and paymentDetails.trxnId',
+        )
+    }
+
+    // 3. Find booking
+    const bookingDetails = await Booking.findById(id)
+    if (!bookingDetails) {
+        res.status(404)
+        throw new Error('Booking Details Not Found')
+    }
+
+    // 4. Ownership verification
+    const userRole = req.user.role?.role || req.user.role
+    const isOwner = bookingDetails.user.toString() === req.user._id.toString()
+    const isAdmin = userRole === 'admin'
+
+    if (!isOwner && !isAdmin) {
+        res.status(403)
+        throw new Error(
+            'You are not authorized to update payment for this booking',
+        )
+    }
+
+    // 5. State guards
+    if (bookingDetails.paymentStatus === 'paid') {
+        res.status(400)
+        throw new Error('There are no payments pending for this booking')
+    }
+
+    if (bookingDetails.bookingStatus === 'cancelled') {
+        res.status(400)
+        throw new Error('Cannot submit payment for a cancelled booking')
+    }
+
+    // 6. Tally amounts
+    if (Number(paymentAmount) !== bookingDetails.totalAmount) {
+        res.status(400)
+        throw new Error(
+            `Paid amount (${paymentAmount}) does not match outstanding total (${bookingDetails.totalAmount})`,
+        )
+    }
+
+    // 7. Update fields directly on the document
+    bookingDetails.paymentStatus = 'paid'
+    bookingDetails.bookingStatus = 'confirmed'
+    bookingDetails.paymentDetails = {
+        mode: paymentDetails.mode.toLowerCase().trim(),
+        trxnId: paymentDetails.trxnId,
+    }
+
+    // 8. Persist to MongoDB
+    const updatedBooking = await bookingDetails.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Payment recorded and booking confirmed successfully',
+        data: updatedBooking,
+    })
+})
+
+// ==================================
+//  @desc :     Update Dispatch Status and details for a booking
+//  @route:     PUT /api/bookings/:id/dispatch
+//  @access:    Private (Admin / Organizer)
+// ==================================
+export const updateDispatchStatus = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { despatchDetails } = req.body
+
+    // 1. Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    // 2. Validate payload structure
+    const courierName = despatchDetails?.courierName?.trim()
+    const podId = despatchDetails?.podId?.trim()
+
+    if (!courierName || !podId) {
+        res.status(400)
+        throw new Error('Please provide courierName and podId')
+    }
+
+    // 3. Find booking & populate event organizer
+    const bookingDetails = await Booking.findById(id).populate(
+        'event',
+        'organizerId',
+    )
+
+    if (!bookingDetails) {
+        res.status(404)
+        throw new Error('Booking Details Not Found')
+    }
+
+    // 4. Ownership verification
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOwner =
+        bookingDetails.event?.organizerId?.toString() ===
+        req.user._id.toString()
+
+    if (!isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error(
+            'You are not authorized to dispatch tickets for an event you do not own',
+        )
+    }
+
+    // 5. State guards
+    if (bookingDetails.paymentStatus !== 'paid') {
+        res.status(400)
+        throw new Error('Cannot dispatch tickets for an unpaid booking')
+    }
+
+    if (bookingDetails.bookingStatus === 'cancelled') {
+        res.status(400)
+        throw new Error('Cannot dispatch tickets for a cancelled booking')
+    }
+
+    if (
+        bookingDetails.despatchStatus === 'dispatched' ||
+        bookingDetails.despatchStatus === 'received'
+    ) {
+        res.status(400)
+        throw new Error(
+            `Tickets have already been ${bookingDetails.despatchStatus} for this event via ${bookingDetails.despatchDetails.courierName} (POD: ${bookingDetails.despatchDetails.podId})`,
+        )
+    }
+
+    // 6. Mutate fields
+    bookingDetails.despatchStatus = 'dispatched'
+    bookingDetails.despatchDetails = {
+        courierName,
+        podId,
+    }
+
+    // 7. Persist to MongoDB
+    const updatedBooking = await bookingDetails.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Tickets marked as dispatched successfully',
+        data: updatedBooking,
+    })
+})
+
+// ==================================
+//  @desc :     Update Ticket Receipt Status
+//  @route:     PUT /api/bookings/:id/receive
+//  @access:    Private (Admin / Organizer)
+// ==================================
+export const updateReceiveStatus = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    // 1. Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    // 2. Find booking & populate event organizer
+    const bookingDetails = await Booking.findById(id).populate(
+        'event',
+        'organizerId',
+    )
+
+    if (!bookingDetails) {
+        res.status(404)
+        throw new Error('Booking Details Not Found')
+    }
+
+    // 3. Ownership verification
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOwner =
+        bookingDetails.event?.organizerId?.toString() ===
+        req.user._id.toString()
+    const isCustomer =
+        bookingDetails.user.toString() === req.user._id.toString()
+
+    if (!isCustomer && !isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error(
+            'You are not authorized to update Despatch status for tickets of the events you do not own',
+        )
+    }
+
+    // 5. State guards
+    if (bookingDetails.despatchStatus !== 'dispatched') {
+        res.status(400)
+        throw new Error(
+            'Tickets have not yet been dispatched hence cant update status to received',
+        )
+    }
+
+    if (bookingDetails.bookingStatus === 'cancelled') {
+        res.status(400)
+        throw new Error(
+            'Cannot mark tickets as received for a cancelled booking',
+        )
+    }
+
+    // 6. Mutate fields
+    bookingDetails.despatchStatus = 'received'
+
+    // 7. Persist to MongoDB
+    const updatedBooking = await bookingDetails.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Tickets marked as received successfully',
+        data: updatedBooking,
+    })
+})
+
+// ==================================
+//  @desc :     Bulk Update Ticket Receipt Status
+//  @route:     PATCH /api/bookings/bulk-receive
+//  @access:    Private (Admin / Organizer)
+// ==================================
+export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
+    const { bookingIds } = req.body
+
+    // 1. Validate incoming array structure
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+        res.status(400)
+        throw new Error('Please provide an array of bookingIds')
+    }
+
+    // 2. Validate format of each ObjectId in the array
+    const isValidFormat = bookingIds.every((id) =>
+        mongoose.Types.ObjectId.isValid(id),
+    )
+    if (!isValidFormat) {
+        res.status(400)
+        throw new Error(
+            'One or more booking IDs have an invalid ObjectId format',
+        )
+    }
+
+    // 3. Resolve role and determine ownership scope
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+
+    let filter = {
+        _id: { $in: bookingIds },
+        despatchStatus: 'dispatched',
+        bookingStatus: { $ne: 'cancelled' },
+    }
+
+    // If organizer, restrict update strictly to events they own
+    if (!isAdmin) {
+        const organizerEvents = await Event.find({
+            organizerId: req.user._id,
+        }).select('_id')
+
+        const ownedEventIds = organizerEvents.map((evt) => evt._id)
+
+        filter.event = { $in: ownedEventIds }
+    }
+
+    // 4. Execute atomic bulk update
+    const result = await Booking.updateMany(filter, {
+        $set: {
+            despatchStatus: 'received',
+        },
+    })
+
+    res.status(200).json({
+        success: true,
+        message: `Successfully marked ${result.modifiedCount} booking(s) as received`,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount,
+    })
+})

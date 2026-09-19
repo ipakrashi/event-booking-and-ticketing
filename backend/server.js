@@ -11,6 +11,7 @@ import adminRoutes from './route/adminRoute.js'
 import userRoutes from './route/userRoute.js'
 import categoryRoutes from './route/categoryRoute.js'
 import eventRoutes from './route/eventRoute.js'
+import bookingRoutes from './route/bookingRoute.js'
 import connectDB from './util/connectDb.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -37,6 +38,7 @@ app.use('/api/category', categoryRoutes)
 // Expose the uploads directory so image URLs can be fetched publicly in the browser/client
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 app.use('/api/events', eventRoutes)
+app.use('/api/bookings', bookingRoutes)
 
 // ---- PRODUCTION ROUTING BLOCK ----
 if (process.env.NODE_ENV === 'production') {
