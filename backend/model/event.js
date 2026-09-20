@@ -108,9 +108,29 @@ const eventSchema = new mongoose.Schema(
                 'published',
                 'sold_out',
                 'cancelled',
+                'completed',
             ],
             default: 'draft',
             index: true,
+        },
+        // Additions to eventSchema:
+        commissionRate: {
+            type: Number,
+            default: 10, // Platform cut (e.g., 10%)
+            min: [0, 'Commission rate cannot be negative'],
+            max: [100, 'Commission rate cannot exceed 100%'],
+        },
+        platformGSTRate: {
+            type: Number,
+            default: 18, // Standard 18% GST on facilitation/service charges
+            min: [0, 'Platform GST rate cannot be negative'],
+            max: [28, 'Platform GST rate cannot exceed 28%'],
+        },
+        ticketGSTRate: {
+            type: Number,
+            default: 18, // GST applied to the ticket admission if taxable
+            min: [0, 'Ticket GST rate cannot be negative'],
+            max: [28, 'Ticket GST rate cannot exceed 28%'],
         },
     },
     {

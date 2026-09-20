@@ -558,8 +558,8 @@ export const cancelBooking = asyncHandler(async (req, res) => {
     const nonCancellableStatuses = [
         'rejected',
         'cancelled',
-        'full_refund_issued',
-        'partial_refund_issued',
+        'refund_issued',
+        'refund_requested',
     ]
     if (nonCancellableStatuses.includes(bookingDetails.bookingStatus)) {
         res.status(400)
