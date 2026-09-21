@@ -1,4 +1,5 @@
 // backend/controller/eventController.js
+
 import asyncHandler from 'express-async-handler'
 import mongoose from 'mongoose'
 import Event from '../model/event.js'
@@ -6,12 +7,11 @@ import Venue from '../model/venue.js'
 import { deleteFile } from '../util/fileUtils.js'
 import { computeEventSettlement } from '../util/settlementService.js'
 
-// ==================================
-//  @desc :     Create New Event by Admin
-//  @route:     POST /api/admin/events
-//  @access:    Admin / Private
-// ==================================
-
+// ============================================================================
+// @desc    Create New Event by Admin / Organizer
+// @route   POST /api/admin/events
+// @access  Private (Admin)
+// ============================================================================
 export const createEvent = asyncHandler(async (req, res) => {
     const {
         title,
@@ -25,9 +25,12 @@ export const createEvent = asyncHandler(async (req, res) => {
         endDate,
         ticketTiers,
         status,
+        isFeatured,
+        isTopEvent,
+        bannerImages,
     } = req.body
 
-    // 1. Validate required fields
+    // 1. Validate required structural invariants
     if (
         !title ||
         !description ||
@@ -42,95 +45,180 @@ export const createEvent = asyncHandler(async (req, res) => {
     ) {
         res.status(400)
         throw new Error(
-            'Please provide all required fields including ticket tiers',
+            'Please provide all required fields: title, description, categoryId, organizerId, venueId, auditoriumId, screenId, startDate, endDate, and ticketTiers',
         )
     }
 
-    // 2. Parse ticketTiers (form-data sends nested structures as JSON strings)
+    // 2. Validate MongoDB ObjectId formats
+    if (
+        !mongoose.Types.ObjectId.isValid(categoryId) ||
+        !mongoose.Types.ObjectId.isValid(organizerId) ||
+        !mongoose.Types.ObjectId.isValid(venueId) ||
+        !mongoose.Types.ObjectId.isValid(auditoriumId) ||
+        !mongoose.Types.ObjectId.isValid(screenId)
+    ) {
+        res.status(400)
+        throw new Error(
+            'One or more referenced IDs have an invalid ObjectId format',
+        )
+    }
+
+    // 3. Parse and validate ticket tiers (multipart form-data sends arrays as JSON strings)
     let parsedTicketTiers
     try {
         parsedTicketTiers =
             typeof ticketTiers === 'string'
                 ? JSON.parse(ticketTiers)
                 : ticketTiers
-    } catch (err) {
+    } catch {
         res.status(400)
-        throw new Error(
-            'Invalid format for ticketTiers. Expected a valid JSON array',
-        )
+        throw new Error('Invalid JSON format provided for ticketTiers')
     }
 
     if (!Array.isArray(parsedTicketTiers) || parsedTicketTiers.length === 0) {
         res.status(400)
-        throw new Error('At least one ticket tier must be provided')
+        throw new Error(
+            'At least one ticket tier must be provided in ticketTiers',
+        )
     }
 
-    // 3. Collision check: Avoid double-booking the exact screen at the exact start time
+    // 4. Parse bannerImages if supplied as a JSON string
+    let parsedBannerImages = []
+    if (bannerImages) {
+        try {
+            parsedBannerImages =
+                typeof bannerImages === 'string'
+                    ? JSON.parse(bannerImages)
+                    : bannerImages
+        } catch {
+            parsedBannerImages = [bannerImages]
+        }
+    }
+
+    // 5. Verify Venue, Auditorium, Screen, and physical capacity ceiling
+    const venueDoc = await Venue.findById(venueId)
+    if (!venueDoc) {
+        res.status(404)
+        throw new Error('Associated venue not found')
+    }
+
+    const targetAudi = venueDoc.auditoriums.id(auditoriumId)
+    if (!targetAudi) {
+        res.status(404)
+        throw new Error('Associated auditorium not found in this venue')
+    }
+
+    const targetScreen = targetAudi.screens.id(screenId)
+    if (!targetScreen) {
+        res.status(404)
+        throw new Error('Associated screen not found in this auditorium')
+    }
+
+    const totalAllocatedSeats = parsedTicketTiers.reduce(
+        (sum, tier) => sum + (Number(tier.totalQuantity) || 0),
+        0,
+    )
+
+    if (totalAllocatedSeats > targetScreen.capacity) {
+        res.status(400)
+        throw new Error(
+            `Total tickets allocated across tiers (${totalAllocatedSeats}) exceeds screen seating capacity (${targetScreen.capacity})`,
+        )
+    }
+
+    // 6. Collision check: prevent overlapping schedules on the exact same screen
     const duplicateEvent = await Event.findOne({
         venueId,
         auditoriumId,
         screenId,
         startDate: new Date(startDate),
+        status: { $ne: 'cancelled' },
     })
 
     if (duplicateEvent) {
         res.status(400)
         throw new Error(
-            'An event is already scheduled at this screen for the selected time',
+            'An active event is already scheduled at this auditorium screen for the selected start time',
         )
     }
 
-    // 4. Handle Multer file upload (preserving Cloudinary-ready object structure)
+    // 7. Process Multer poster image upload
     const posterImage = req.file
         ? { url: `/uploads/${req.file.filename}`, publicId: null }
         : { url: '/placeholder-event.png', publicId: null }
 
-    // 5. Persist document
+    // 8. Construct and persist document
     const event = await Event.create({
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         categoryId,
         organizerId,
         venueId,
         auditoriumId,
         screenId,
-        startDate,
-        endDate,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
         ticketTiers: parsedTicketTiers,
         posterImage,
+        bannerImages: Array.isArray(parsedBannerImages)
+            ? parsedBannerImages
+            : [],
+        isFeatured: isFeatured === 'true' || isFeatured === true,
+        isTopEvent: isTopEvent === 'true' || isTopEvent === true,
         status: status || 'draft',
     })
 
-    res.status(201).json({ success: true, data: event })
+    res.status(201).json({
+        success: true,
+        data: event,
+    })
 })
 
-// ==================================
-//  @desc :     Get Public Events Catalog
-//  @route:     GET /api/events
-//  @access:    Public
-// ==================================
+// ============================================================================
+// @desc    Get Public Events Catalog (With Filtering for Home & Catalog)
+// @route   GET /api/events
+// @access  Public
+// ============================================================================
 export const getAllEvents = asyncHandler(async (req, res) => {
-    const { categoryId, status } = req.query
+    const { categoryId, status, isFeatured, isTopEvent, search } = req.query
 
-    // 1. Base filter: exclude internal organizer drafts
+    // 1. Default barrier: exclude internal organizer drafts from public queries
     const filter = {
         status: { $ne: 'draft' },
     }
 
-    // 2. Allow clients to filter by specific public statuses (e.g., ?status=published)
+    // 2. Allow clients to filter by specific public lifecycle status
     if (status && status !== 'draft') {
         filter.status = status
     }
 
-    // 3. Category filter
-    if (categoryId) {
+    // 3. Category filtering
+    if (categoryId && mongoose.Types.ObjectId.isValid(categoryId)) {
         filter.categoryId = categoryId
     }
 
+    // 4. Section 2: Top Events Filter (?isTopEvent=true)
+    if (isTopEvent !== undefined) {
+        filter.isTopEvent = isTopEvent === 'true' || isTopEvent === true
+    }
+
+    // 5. Section 3: Featured Spotlight Filter (?isFeatured=true)
+    if (isFeatured !== undefined) {
+        filter.isFeatured = isFeatured === 'true' || isFeatured === true
+    }
+
+    // 6. Optional text search over title and description
+    if (search && search.trim()) {
+        filter.$or = [
+            { title: { $regex: search.trim(), $options: 'i' } },
+            { description: { $regex: search.trim(), $options: 'i' } },
+        ]
+    }
+
     const allEvents = await Event.find(filter)
-        .populate('categoryId', 'name')
+        .populate('categoryId', 'eventCategory')
         .populate('venueId', 'name address city')
-        .populate('organizerId', 'name email')
+        .populate('organizerId', 'userName email')
         .sort({ startDate: 1 })
 
     res.status(200).json({
@@ -140,39 +228,58 @@ export const getAllEvents = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Get Public Events Catalog by Event Id
-//  @route:     GET /api/events/:id
-//  @access:    Public
-// ==================================
+// ============================================================================
+// @desc    Get Public Event Details by ID (With Populated Hierarchy)
+// @route   GET /api/events/:id
+// @access  Public
+// ============================================================================
 export const getEventById = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid event ID format')
+    }
+
     const selectedEvent = await Event.findOne({
-        _id: req.params.id,
+        _id: id,
         status: { $ne: 'draft' },
     })
-        .populate('categoryId', 'name')
+        .populate('categoryId', 'eventCategory')
         .populate('venueId', 'name address city auditoriums')
-        .populate('organizerId', 'name email')
+        .populate('organizerId', 'userName email')
 
     if (!selectedEvent) {
         res.status(404)
-        throw new Error('Event not found')
+        throw new Error('Event not found or is currently not published')
     }
 
-    // Locate the specific auditorium subdocument inside venueId
+    // Resolve nested auditorium and screen subdocuments from venue document
     const selectedAuditorium = selectedEvent.venueId?.auditoriums?.id(
         selectedEvent.auditoriumId,
     )
 
-    // Locate the specific screen subdocument inside that auditorium
     const selectedScreen = selectedAuditorium?.screens?.id(
         selectedEvent.screenId,
     )
 
     const outputEvent = {
         ...selectedEvent.toObject(),
-        selectedAuditorium: selectedAuditorium || null,
-        selectedScreen: selectedScreen || null,
+        selectedAuditorium: selectedAuditorium
+            ? {
+                  _id: selectedAuditorium._id,
+                  name: selectedAuditorium.name,
+                  screenCount: selectedAuditorium.screens?.length || 0,
+              }
+            : null,
+        selectedScreen: selectedScreen
+            ? {
+                  _id: selectedScreen._id,
+                  screenNumber: selectedScreen.screenNumber,
+                  capacity: selectedScreen.capacity,
+                  soundSystem: selectedScreen.soundSystem,
+              }
+            : null,
     }
 
     res.status(200).json({
@@ -180,50 +287,21 @@ export const getEventById = asyncHandler(async (req, res) => {
         data: outputEvent,
     })
 })
-// ==================================
-//  @desc :     Delete Event (Hard delete only if zero sales)
-//  @route:     DELETE /api/admin/events/:id
-//  @access:    Admin / Private
-// ==================================
-export const deleteEvent = asyncHandler(async (req, res) => {
-    const event = await Event.findById(req.params.id)
 
-    if (!event) {
-        res.status(404)
-        throw new Error('Event not found')
-    }
-
-    // Calculate total tickets sold across all tiers
-    const totalSold = event.ticketTiers.reduce(
-        (sum, tier) => sum + (tier.soldQuantity || 0),
-        0,
-    )
-
-    if (totalSold > 0) {
-        res.status(400)
-        throw new Error(
-            'Cannot delete an event with active ticket sales. Update status to cancelled instead.',
-        )
-    }
-
-    // Safe to delete: remove image from disk and document from MongoDB
-    deleteFile(event.posterImage?.url)
-    await event.deleteOne()
-
-    res.status(200).json({
-        success: true,
-        message: 'Event and associated assets deleted successfully',
-    })
-})
-
-// ==================================
-//  @desc :     Update Event Details (With Deep Integrity Engine)
-//  @route:     PUT /api/admin/events/:id
-//  @access:    Admin / Private
-// ==================================
+// ============================================================================
+// @desc    Update Event Details (Enforcing Capacity & Inventory Integrity)
+// @route   PUT /api/admin/events/:id
+// @access  Private (Admin)
+// ============================================================================
 export const updateEvent = asyncHandler(async (req, res) => {
-    const event = await Event.findById(req.params.id)
+    const { id } = req.params
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid event ID format')
+    }
+
+    const event = await Event.findById(id)
     if (!event) {
         res.status(404)
         throw new Error('Event not found')
@@ -240,17 +318,17 @@ export const updateEvent = asyncHandler(async (req, res) => {
         endDate,
         ticketTiers,
         status,
+        isFeatured,
+        isTopEvent,
+        bannerImages,
     } = req.body
 
-    // ----------------------------------------------------
-    // 1. RESOLVE TARGET VENUE, AUDITORIUM & SCREEN
-    // ----------------------------------------------------
+    // 1. Resolve Target Venue, Auditorium & Screen Hierarchy
     const targetVenueId = venueId || event.venueId.toString()
     const targetAudiId = auditoriumId || event.auditoriumId.toString()
     const targetScreenId = screenId || event.screenId.toString()
     const targetStartDate = startDate ? new Date(startDate) : event.startDate
 
-    // Fetch the Venue to verify screen capacity and layout
     const venueDoc = await Venue.findById(targetVenueId)
     if (!venueDoc) {
         res.status(404)
@@ -271,9 +349,7 @@ export const updateEvent = asyncHandler(async (req, res) => {
 
     const maxScreenCapacity = targetScreen.capacity
 
-    // ----------------------------------------------------
-    // 2. COLLISION CHECK (IF SCHEDULE / LOCATION CHANGED)
-    // ----------------------------------------------------
+    // 2. Schedule and Location Collision Guard
     const scheduleChanged =
         venueId ||
         auditoriumId ||
@@ -299,9 +375,7 @@ export const updateEvent = asyncHandler(async (req, res) => {
         }
     }
 
-    // ----------------------------------------------------
-    // 3. TICKET TIERS AUDIT & INTEGRITY ENGINE
-    // ----------------------------------------------------
+    // 3. Ticket Tiers Integrity Engine
     if (ticketTiers) {
         let parsedTiers
         try {
@@ -309,9 +383,9 @@ export const updateEvent = asyncHandler(async (req, res) => {
                 typeof ticketTiers === 'string'
                     ? JSON.parse(ticketTiers)
                     : ticketTiers
-        } catch (err) {
+        } catch {
             res.status(400)
-            throw new Error('Invalid JSON format for ticketTiers')
+            throw new Error('Invalid JSON format provided for ticketTiers')
         }
 
         if (!Array.isArray(parsedTiers) || parsedTiers.length === 0) {
@@ -319,31 +393,28 @@ export const updateEvent = asyncHandler(async (req, res) => {
             throw new Error('ticketTiers must be a non-empty array')
         }
 
-        // Calculate total sales committed across all tiers so far
         const totalSold = event.ticketTiers.reduce(
             (sum, tier) => sum + (tier.soldQuantity || 0),
             0,
         )
 
-        // Calculate incoming proposed total capacity
         const proposedTotalCapacity = parsedTiers.reduce(
             (sum, tier) => sum + (Number(tier.totalQuantity) || 0),
             0,
         )
 
-        // Screen capacity ceiling check (applies to both draft and active states)
         if (proposedTotalCapacity > maxScreenCapacity) {
             res.status(400)
             throw new Error(
-                `Total ticket tier allocation (${proposedTotalCapacity}) exceeds screen capacity (${maxScreenCapacity})`,
+                `Total ticket allocation (${proposedTotalCapacity}) exceeds screen capacity (${maxScreenCapacity})`,
             )
         }
 
-        // Branch A: ZERO SALES (Draft mode - complete flexibility)
+        // Branch A: ZERO ACTIVE SALES (Permits structural tier modifications)
         if (totalSold === 0) {
             event.ticketTiers = parsedTiers
         }
-        // Branch B: ACTIVE SALES (Strict integrity mode)
+        // Branch B: ACTIVE SALES ALREADY COMMENCED (Strict immutability)
         else {
             if (parsedTiers.length !== event.ticketTiers.length) {
                 res.status(400)
@@ -352,7 +423,6 @@ export const updateEvent = asyncHandler(async (req, res) => {
                 )
             }
 
-            // Verify and mutate tiers in-place
             for (const existingTier of event.ticketTiers) {
                 const incomingMatch = parsedTiers.find(
                     (t) =>
@@ -367,41 +437,34 @@ export const updateEvent = asyncHandler(async (req, res) => {
                     )
                 }
 
-                // Check immutable pricing snapshot
                 if (Number(incomingMatch.price) !== existingTier.price) {
                     res.status(400)
                     throw new Error(
-                        `Pricing change forbidden for tier "${existingTier.name}" after sales have started`,
+                        `Price modifications are forbidden for tier "${existingTier.name}" after ticket sales start`,
                     )
                 }
 
-                // Check immutable tier label
                 if (incomingMatch.name.trim() !== existingTier.name) {
                     res.status(400)
                     throw new Error(
-                        `Name modification forbidden for tier "${existingTier.name}" after sales have started`,
+                        `Name modifications are forbidden for tier "${existingTier.name}" after ticket sales start`,
                     )
                 }
 
                 const newQuantity = Number(incomingMatch.totalQuantity)
-
-                // Monotonic floor check: cannot drop capacity below tickets already in customer pockets
                 if (newQuantity < existingTier.soldQuantity) {
                     res.status(400)
                     throw new Error(
-                        `Total quantity for tier "${existingTier.name}" cannot be less than already sold tickets (${existingTier.soldQuantity})`,
+                        `Total quantity for tier "${existingTier.name}" cannot be decreased below already sold tickets (${existingTier.soldQuantity})`,
                     )
                 }
 
-                // Apply valid quantity adjustment
                 existingTier.totalQuantity = newQuantity
             }
         }
     }
 
-    // ----------------------------------------------------
-    // 4. POSTER ASSET REPLACEMENT & DISK CLEANUP
-    // ----------------------------------------------------
+    // 4. File Replacement Handling
     if (req.file) {
         deleteFile(event.posterImage?.url)
         event.posterImage = {
@@ -410,18 +473,37 @@ export const updateEvent = asyncHandler(async (req, res) => {
         }
     }
 
-    // ----------------------------------------------------
-    // 5. CORE FIELD MUTATIONS
-    // ----------------------------------------------------
-    if (title) event.title = title
-    if (description) event.description = description
-    if (categoryId) event.categoryId = categoryId
-    if (venueId) event.venueId = targetVenueId
-    if (auditoriumId) event.auditoriumId = targetAudiId
-    if (screenId) event.screenId = targetScreenId
-    if (startDate) event.startDate = targetStartDate
-    if (endDate) event.endDate = new Date(endDate)
-    if (status) event.status = status
+    // 5. Apply Scalar & Homepage Layout Fields Safely
+    if (title !== undefined) event.title = title.trim()
+    if (description !== undefined) event.description = description.trim()
+    if (categoryId !== undefined) event.categoryId = categoryId
+    if (venueId !== undefined) event.venueId = targetVenueId
+    if (auditoriumId !== undefined) event.auditoriumId = targetAudiId
+    if (screenId !== undefined) event.screenId = targetScreenId
+    if (startDate !== undefined) event.startDate = targetStartDate
+    if (endDate !== undefined) event.endDate = new Date(endDate)
+    if (status !== undefined) event.status = status
+
+    if (isFeatured !== undefined) {
+        event.isFeatured = isFeatured === 'true' || isFeatured === true
+    }
+
+    if (isTopEvent !== undefined) {
+        event.isTopEvent = isTopEvent === 'true' || isTopEvent === true
+    }
+
+    if (bannerImages !== undefined) {
+        try {
+            event.bannerImages =
+                typeof bannerImages === 'string'
+                    ? JSON.parse(bannerImages)
+                    : bannerImages
+        } catch {
+            event.bannerImages = Array.isArray(bannerImages)
+                ? bannerImages
+                : [bannerImages]
+        }
+    }
 
     const updatedEvent = await event.save()
 
@@ -431,11 +513,51 @@ export const updateEvent = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Get Real-time Event Settlement Summary (Preview)
-//  @route:     GET /api/events/:id/settlement-summary
-//  @access:    Private (Organizer / Admin)
-// ==================================
+// ============================================================================
+// @desc    Delete Event (Restricted to Zero Committed Sales)
+// @route   DELETE /api/admin/events/:id
+// @access  Private (Admin)
+// ============================================================================
+export const deleteEvent = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid event ID format')
+    }
+
+    const event = await Event.findById(id)
+    if (!event) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    const totalSold = event.ticketTiers.reduce(
+        (sum, tier) => sum + (tier.soldQuantity || 0),
+        0,
+    )
+
+    if (totalSold > 0) {
+        res.status(400)
+        throw new Error(
+            'Cannot delete an event with active ticket sales. Update its status to "cancelled" instead.',
+        )
+    }
+
+    deleteFile(event.posterImage?.url)
+    await event.deleteOne()
+
+    res.status(200).json({
+        success: true,
+        message: 'Event and associated assets removed successfully',
+    })
+})
+
+// ============================================================================
+// @desc    Get Real-time Event Settlement Summary (Preview)
+// @route   GET /api/events/:id/settlement-summary
+// @access  Private (Organizer / Admin)
+// ============================================================================
 export const getEventSettlementSummary = asyncHandler(async (req, res) => {
     const { id } = req.params
 
@@ -446,10 +568,14 @@ export const getEventSettlementSummary = asyncHandler(async (req, res) => {
 
     const { event, settlement } = await computeEventSettlement(id)
 
-    // Ownership Verification
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (
+        req.user?.role?.role ||
+        req.user?.role ||
+        ''
+    ).toLowerCase()
     const isAdmin = userRole === 'admin'
-    const isOrganizer = event.organizerId.toString() === req.user._id.toString()
+    const isOrganizer =
+        event.organizerId?.toString() === req.user?._id?.toString()
 
     if (!isAdmin && !isOrganizer) {
         res.status(403)

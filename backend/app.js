@@ -12,6 +12,7 @@ import categoryRoutes from './route/categoryRoute.js'
 import eventRoutes from './route/eventRoute.js'
 import bookingRoutes from './route/bookingRoute.js'
 import payoutRoutes from './route/payoutRoute.js'
+import reviewRoute from './route/reviewRoute.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -32,6 +33,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 app.use('/api/events', eventRoutes)
 app.use('/api/bookings', bookingRoutes)
 app.use('/api/payouts', payoutRoutes)
+app.use('/api/reviews', reviewRoute)
 
 // Production Static Serving
 if (process.env.NODE_ENV === 'production') {
