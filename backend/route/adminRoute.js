@@ -22,6 +22,10 @@ import {
     updateEvent,
     deleteEvent,
 } from '../controller/eventController.js'
+import {
+    generateEventPayout,
+    recordPayoutDisbursement,
+} from '../controller/payoutController.js'
 
 const router = express.Router()
 
@@ -57,6 +61,8 @@ router.post(
     admin,
     addScreenToAuditorium,
 )
+
+// Venue Admin Routes
 router.put('/venues/:venueId', protect, admin, updateVenue)
 router.put(
     '/venues/:venueId/auditoriums/:audiId/screens/:screenId',
@@ -76,4 +82,9 @@ router.delete(
 router.post('/events', protect, admin, upload.single('poster'), createEvent)
 router.put('/events/:id', protect, admin, upload.single('poster'), updateEvent)
 router.delete('/events/:id', protect, admin, deleteEvent)
+
+// Admin-only payout operations
+router.post('/event/:eventId/generate', protect, admin, generateEventPayout)
+
+router.post('/:payoutId/disburse', protect, admin, recordPayoutDisbursement)
 export default router
