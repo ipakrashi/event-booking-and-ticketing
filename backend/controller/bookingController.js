@@ -1,5 +1,7 @@
 import asyncHandler from 'express-async-handler'
 import mongoose from 'mongoose'
+import crypto from 'crypto'
+import QRCode from 'qrcode'
 import Event from '../model/event.js'
 import Booking from '../model/booking.js'
 
@@ -84,7 +86,7 @@ export const createBooking = asyncHandler(async (req, res) => {
             $inc: { 'ticketTiers.$.soldQuantity': requestedQty },
         },
         {
-            new: true,
+            returnDocument: 'after',
             runValidators: true,
         },
     )
@@ -266,6 +268,10 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
     bookingDetails.paymentDetails = {
         mode: paymentDetails.mode.toLowerCase().trim(),
         trxnId: paymentDetails.trxnId,
+    }
+    // Assign cryptographically random entry pass token if not already assigned
+    if (!bookingDetails.entryPassToken) {
+        bookingDetails.entryPassToken = crypto.randomBytes(32).toString('hex')
     }
 
     // 8. Persist to MongoDB
@@ -587,7 +593,7 @@ export const cancelBooking = asyncHandler(async (req, res) => {
             $inc: { 'ticketTiers.$.soldQuantity': -parsedQty },
         },
         {
-            new: true,
+            returnDocument: 'after',
             runValidators: true,
         },
     )
@@ -604,6 +610,7 @@ export const cancelBooking = asyncHandler(async (req, res) => {
     bookingDetails.cancellationReason = cancellationReason || 'Not specified'
     bookingDetails.refundAmount = parsedQty * bookingDetails.unitPrice
     bookingDetails.bookingStatus = 'cancelled'
+    bookingDetails.entryPassToken = null
 
     if (bookingDetails.paymentStatus === 'paid') {
         bookingDetails.paymentStatus = 'refund_requested'
@@ -616,5 +623,177 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         success: true,
         message: 'Booking cancelled and ticket inventory restored successfully',
         data: updatedBooking,
+    })
+})
+
+// ==================================
+//  @desc :     Get Digital Entry Pass with Dynamic QR Code
+//  @route:     GET /api/bookings/:id/entry-pass
+//  @access:    Private (Customer Owner / Admin)
+// ==================================
+export const getDigitalEntryPass = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    const booking = await Booking.findById(id)
+        .populate('event', 'title startDate endDate venueId posterImage status')
+        .populate({
+            path: 'event',
+            populate: {
+                path: 'venueId',
+                select: 'name address city',
+            },
+        })
+        .populate('user', 'userName email')
+
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    // Ownership Verification
+    const userRole = req.user.role?.role || req.user.role
+    const isOwner = booking.user._id.toString() === req.user._id.toString()
+    const isAdmin = userRole === 'admin'
+
+    if (!isOwner && !isAdmin) {
+        res.status(403)
+        throw new Error('Not authorized to access this entry pass')
+    }
+
+    // Guard: Must be paid and confirmed
+    if (
+        booking.paymentStatus !== 'paid' ||
+        booking.bookingStatus !== 'confirmed'
+    ) {
+        res.status(400)
+        throw new Error(
+            `Cannot generate entry pass for a booking with payment status '${booking.paymentStatus}' and booking status '${booking.bookingStatus}'`,
+        )
+    }
+
+    if (!booking.entryPassToken) {
+        res.status(500)
+        throw new Error(
+            'Entry pass token is missing for this confirmed booking',
+        )
+    }
+
+    // Generate Base64 Data URI using High Error Correction Level ('H')
+    const qrDataUrl = await QRCode.toDataURL(booking.entryPassToken, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: 320,
+        color: {
+            dark: '#000000',
+            light: '#ffffff',
+        },
+    })
+
+    res.status(200).json({
+        success: true,
+        data: {
+            passId: booking._id,
+            qrCode: qrDataUrl,
+            entryPassToken: booking.entryPassToken,
+            isCheckedIn: booking.isCheckedIn,
+            checkInTimestamp: booking.checkInTimestamp,
+            event: {
+                title: booking.event?.title,
+                startDate: booking.event?.startDate,
+                endDate: booking.event?.endDate,
+                venue: booking.event?.venueId?.name,
+                city: booking.event?.venueId?.city,
+                address: booking.event?.venueId?.address,
+            },
+            attendee: {
+                name: booking.user?.userName,
+                email: booking.user?.email,
+                tierName: booking.tierName,
+                bookedQty: booking.bookedQty,
+            },
+        },
+    })
+})
+
+// ==================================
+//  @desc :     Verify Entry Pass at Gate Scanner (Anti-Passback)
+//  @route:     POST /api/bookings/verify-entry
+//  @access:    Private (Admin / Event Staff / Organizer)
+// ==================================
+export const verifyGateEntry = asyncHandler(async (req, res) => {
+    const { passToken } = req.body
+
+    if (!passToken || typeof passToken !== 'string') {
+        res.status(400)
+        throw new Error('Please provide a valid passToken string')
+    }
+
+    // Find booking by the unique, indexed token
+    const booking = await Booking.findOne({ entryPassToken: passToken.trim() })
+        .populate('event', 'title startDate endDate organizerId status')
+        .populate('user', 'userName email')
+
+    if (!booking) {
+        res.status(404)
+        throw new Error('Invalid or non-existent entry pass. Admission Denied.')
+    }
+
+    // Authorization: Verifier must be admin, or the organizer/assigned staff of this event
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOrganizer =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error(
+            'Not authorized to scan or admit attendees for this event',
+        )
+    }
+
+    // State Barrier: Active Payment & Booking Status
+    if (
+        booking.bookingStatus === 'cancelled' ||
+        booking.paymentStatus !== 'paid'
+    ) {
+        res.status(400)
+        throw new Error(
+            `Admission Denied: Pass is associated with a ${booking.bookingStatus} booking`,
+        )
+    }
+
+    // Anti-Passback Guard: Prevent ticket reuse
+    if (booking.isCheckedIn) {
+        res.status(400)
+        throw new Error(
+            `Admission Denied: Pass has ALREADY been scanned and admitted on ${new Date(
+                booking.checkInTimestamp,
+            ).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
+        )
+    }
+
+    // Atomic Admission Commit
+    booking.isCheckedIn = true
+    booking.checkInTimestamp = new Date()
+    booking.checkedInBy = req.user._id
+
+    const admittedBooking = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Entry Approved. Welcome to the event!',
+        data: {
+            passId: admittedBooking._id,
+            attendeeName: booking.user?.userName,
+            tier: admittedBooking.tierName,
+            admittedQuantity: admittedBooking.bookedQty,
+            checkInTimestamp: admittedBooking.checkInTimestamp,
+            eventTitle: booking.event?.title,
+        },
     })
 })

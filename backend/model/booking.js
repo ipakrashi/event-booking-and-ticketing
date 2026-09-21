@@ -122,6 +122,28 @@ const bookingSchema = new mongoose.Schema(
                 default: null,
             },
         },
+        // --- Gate Entry & Digital Pass ---
+        entryPassToken: {
+            type: String,
+            trim: true,
+            default: null,
+            sparse: true,
+            unique: true,
+        },
+        isCheckedIn: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+        checkInTimestamp: {
+            type: Date,
+            default: null,
+        },
+        checkedInBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null,
+        },
     },
     {
         timestamps: true,
