@@ -4,6 +4,7 @@ import mongoose from 'mongoose'
 import Event from '../model/event.js'
 import Venue from '../model/venue.js'
 import { deleteFile } from '../util/fileUtils.js'
+import { computeEventSettlement } from '../util/settlementService.js'
 
 // ==================================
 //  @desc :     Create New Event by Admin
@@ -427,5 +428,43 @@ export const updateEvent = asyncHandler(async (req, res) => {
     res.status(200).json({
         success: true,
         data: updatedEvent,
+    })
+})
+
+// ==================================
+//  @desc :     Get Real-time Event Settlement Summary (Preview)
+//  @route:     GET /api/events/:id/settlement-summary
+//  @access:    Private (Organizer / Admin)
+// ==================================
+export const getEventSettlementSummary = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid Event ID format')
+    }
+
+    const { event, settlement } = await computeEventSettlement(id)
+
+    // Ownership Verification
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOrganizer = event.organizerId.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error(
+            'Not authorized to view financial metrics for this event',
+        )
+    }
+
+    res.status(200).json({
+        success: true,
+        data: {
+            eventId: event._id,
+            title: event.title,
+            eventStatus: event.status,
+            ...settlement,
+        },
     })
 })

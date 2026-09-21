@@ -113,7 +113,7 @@ export const createBooking = asyncHandler(async (req, res) => {
         totalAmount: totalAmount,
         bookingStatus: 'request_sent',
         paymentStatus: 'not_paid',
-        despatchStatus: 'not_despatched',
+        despatchStatus: 'not_dispatched',
     })
 
     res.status(201).json({
