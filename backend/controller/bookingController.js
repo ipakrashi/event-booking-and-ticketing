@@ -1,3 +1,5 @@
+// backend/controller/bookingController.js
+
 import asyncHandler from 'express-async-handler'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -143,7 +145,7 @@ export const getMyBookings = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :    Get All Bookings for a Specific Event (Attendee Roster)
+//  @desc :     Get All Bookings for a Specific Event (Attendee Roster)
 //  @route:     GET /api/bookings/event/:eventId
 //  @access:    Private/Admin/Organiser
 // ==================================
@@ -178,7 +180,10 @@ export const getEventBookings = asyncHandler(async (req, res) => {
     }
 
     const bookings = await Booking.find({ event: eventId })
-        .populate('user', 'userName email')
+        .populate(
+            'user',
+            'userName email phone address city state pincode country',
+        )
         .sort({ createdAt: -1 })
 
     // Summary metrics for the organizer dashboard
@@ -267,8 +272,9 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
     bookingDetails.bookingStatus = 'confirmed'
     bookingDetails.paymentDetails = {
         mode: paymentDetails.mode.toLowerCase().trim(),
-        trxnId: paymentDetails.trxnId,
+        trxnId: paymentDetails.trxnId.trim(),
     }
+
     // Assign cryptographically random entry pass token if not already assigned
     if (!bookingDetails.entryPassToken) {
         bookingDetails.entryPassToken = crypto.randomBytes(32).toString('hex')
@@ -285,7 +291,7 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Update Dispatch Status and details for a booking
+//  @desc :     Update Dispatch Status, Generate Shipping Label & Manifest
 //  @route:     PUT /api/bookings/:id/dispatch
 //  @access:    Private (Admin / Organizer)
 // ==================================
@@ -308,13 +314,15 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         throw new Error('Please provide courierName and podId')
     }
 
-    // 3. Find booking & populate event organizer
-    const bookingDetails = await Booking.findById(id).populate(
-        'event',
-        'organizerId',
-    )
+    // 3. Find booking & populate organizer and recipient contact/dispatch information
+    const booking = await Booking.findById(id)
+        .populate('event', 'organizerId title')
+        .populate(
+            'user',
+            'userName email phone address city state country pincode',
+        )
 
-    if (!bookingDetails) {
+    if (!booking) {
         res.status(404)
         throw new Error('Booking Details Not Found')
     }
@@ -323,8 +331,7 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
     const isOwner =
-        bookingDetails.event?.organizerId?.toString() ===
-        req.user._id.toString()
+        booking.event?.organizerId?.toString() === req.user._id.toString()
 
     if (!isAdmin && !isOwner) {
         res.status(403)
@@ -334,47 +341,141 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
     }
 
     // 5. State guards
-    if (bookingDetails.paymentStatus !== 'paid') {
+    if (booking.paymentStatus !== 'paid') {
         res.status(400)
         throw new Error('Cannot dispatch tickets for an unpaid booking')
     }
 
-    if (bookingDetails.bookingStatus === 'cancelled') {
+    if (booking.bookingStatus === 'cancelled') {
         res.status(400)
         throw new Error('Cannot dispatch tickets for a cancelled booking')
     }
 
     if (
-        bookingDetails.despatchStatus === 'dispatched' ||
-        bookingDetails.despatchStatus === 'received'
+        booking.despatchStatus === 'dispatched' ||
+        booking.despatchStatus === 'received'
     ) {
         res.status(400)
         throw new Error(
-            `Tickets have already been ${bookingDetails.despatchStatus} for this event via ${bookingDetails.despatchDetails.courierName} (POD: ${bookingDetails.despatchDetails.podId})`,
+            `Tickets have already been ${booking.despatchStatus} for this event via ${booking.despatchDetails?.courierName} (POD: ${booking.despatchDetails?.podId})`,
         )
     }
 
-    // 6. Mutate fields
-    bookingDetails.despatchStatus = 'dispatched'
-    bookingDetails.despatchDetails = {
+    // 6. Recipient Physical Address Guard
+    const recipient = booking.user
+    if (
+        !recipient ||
+        !recipient.address ||
+        !recipient.city ||
+        !recipient.pincode
+    ) {
+        res.status(400)
+        throw new Error(
+            'Attendee delivery address is incomplete (address, city, or pincode missing). Cannot generate shipping label.',
+        )
+    }
+
+    // 7. Synthesize Verified Physical Shipping Label
+    const shippingLabel = {
+        bookingId: booking._id,
+        eventTitle: booking.event?.title,
+        recipientName: recipient.userName,
+        recipientContact: recipient.phone || 'N/A',
+        recipientEmail: recipient.email,
+        deliveryAddress:
+            `${recipient.address}, ${recipient.city}, ${recipient.state || ''} - ${recipient.pincode}, ${recipient.country || 'India'}`.replace(
+                /\s+,/g,
+                ',',
+            ),
+        courierService: courierName,
+        trackingNumber: podId,
+        dispatchedAt: new Date(),
+    }
+
+    // 8. Mutate fields & commit
+    booking.despatchStatus = 'dispatched'
+    booking.despatchDetails = {
         courierName,
         podId,
     }
 
-    // 7. Persist to MongoDB
-    const updatedBooking = await bookingDetails.save()
+    const updatedBooking = await booking.save()
 
     res.status(200).json({
         success: true,
         message: 'Tickets marked as dispatched successfully',
         data: updatedBooking,
+        shippingLabel,
+    })
+})
+
+// ==================================
+//  @desc :     Get Physical Shipping Label for a Booking
+//  @route:     GET /api/bookings/:id/shipping-label
+//  @access:    Private (Admin / Organizer)
+// ==================================
+export const getShippingLabel = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    const booking = await Booking.findById(id)
+        .populate('event', 'title organizerId')
+        .populate(
+            'user',
+            'userName email phone address city state country pincode',
+        )
+
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking Details Not Found')
+    }
+
+    const userRole = req.user.role?.role || req.user.role
+    const isAdmin = userRole === 'admin'
+    const isOwner =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error(
+            'Not authorized to view shipping label for this booking',
+        )
+    }
+
+    const recipient = booking.user
+    const deliveryAddress = recipient?.address
+        ? `${recipient.address}, ${recipient.city}, ${recipient.state || ''} - ${recipient.pincode}, ${recipient.country || 'India'}`.replace(
+              /\s+,/g,
+              ',',
+          )
+        : 'Incomplete Address'
+
+    const shippingLabel = {
+        bookingId: booking._id,
+        eventTitle: booking.event?.title,
+        recipientName: recipient?.userName || 'N/A',
+        recipientContact: recipient?.phone || 'N/A',
+        recipientEmail: recipient?.email || 'N/A',
+        deliveryAddress,
+        despatchStatus: booking.despatchStatus,
+        courierService: booking.despatchDetails?.courierName || null,
+        trackingNumber: booking.despatchDetails?.podId || null,
+    }
+
+    res.status(200).json({
+        success: true,
+        data: shippingLabel,
     })
 })
 
 // ==================================
 //  @desc :     Update Ticket Receipt Status
 //  @route:     PUT /api/bookings/:id/receive
-//  @access:    Private (Admin / Organizer)
+//  @access:    Private (Customer / Admin / Organizer)
 // ==================================
 export const updateReceiveStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
@@ -408,15 +509,15 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
     if (!isCustomer && !isAdmin && !isOwner) {
         res.status(403)
         throw new Error(
-            'You are not authorized to update Despatch status for tickets of the events you do not own',
+            'You are not authorized to update Despatch status for tickets of events you do not own',
         )
     }
 
-    // 5. State guards
+    // 4. State guards
     if (bookingDetails.despatchStatus !== 'dispatched') {
         res.status(400)
         throw new Error(
-            'Tickets have not yet been dispatched hence cant update status to received',
+            'Tickets have not yet been dispatched, cannot update status to received',
         )
     }
 
@@ -427,10 +528,10 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 6. Mutate fields
+    // 5. Mutate fields
     bookingDetails.despatchStatus = 'received'
 
-    // 7. Persist to MongoDB
+    // 6. Persist to MongoDB
     const updatedBooking = await bookingDetails.save()
 
     res.status(200).json({
@@ -648,7 +749,10 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
                 select: 'name address city',
             },
         })
-        .populate('user', 'userName email')
+        .populate(
+            'user',
+            'userName email phone address city state pincode country',
+        )
 
     if (!booking) {
         res.status(404)
@@ -713,6 +817,12 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
             attendee: {
                 name: booking.user?.userName,
                 email: booking.user?.email,
+                phone: booking.user?.phone || null,
+                address: booking.user?.address || null,
+                city: booking.user?.city || null,
+                state: booking.user?.state || null,
+                pincode: booking.user?.pincode || null,
+                country: booking.user?.country || null,
                 tierName: booking.tierName,
                 bookedQty: booking.bookedQty,
             },

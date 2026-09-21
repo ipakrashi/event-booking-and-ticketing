@@ -1,7 +1,5 @@
-// backend/route/userRoute.js
-
 import express from 'express'
-import { protect, admin, restrictTo } from '../middleware/appMiddleware.js'
+import { protect, admin } from '../middleware/appMiddleware.js'
 import {
     addUser,
     getUsers,
@@ -10,6 +8,18 @@ import {
     editUser,
     deleteUser,
 } from '../controller/userController.js'
+
 const router = express.Router()
-router.post('/', addUser).post('/login', loginUser).post('/logout', logoutUser)
+
+// Public authentication & registration routes
+router.post('/', addUser)
+router.post('/login', loginUser)
+router.post('/logout', logoutUser)
+
+// Admin-only user directory route
+router.get('/', protect, admin, getUsers)
+
+// Profile & Permission Management (Self or Admin)
+router.route('/:id').put(protect, editUser).delete(protect, admin, deleteUser)
+
 export default router

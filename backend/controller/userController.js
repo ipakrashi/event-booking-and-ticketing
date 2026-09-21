@@ -1,17 +1,28 @@
-// backend/controller/userController.js
-
 import asyncHandler from 'express-async-handler'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import mongoose from 'mongoose'
 import User from '../model/user.js'
 
 // ==========================================
 // @desc    Register / Add a new user
 // @route   POST /api/users
-// @access  Private/Admin
+// @access  Public (Self-registration) / Private (Admin)
 // ==========================================
 const addUser = asyncHandler(async (req, res) => {
-    const { userName, email, password, role } = req.body || {}
+    const {
+        userName,
+        email,
+        password,
+        role,
+        phone,
+        address,
+        city,
+        state,
+        country,
+        pincode,
+        image,
+    } = req.body || {}
 
     // 1. Validate required schema invariants
     if (!userName || !email || !password || !role) {
@@ -20,7 +31,7 @@ const addUser = asyncHandler(async (req, res) => {
     }
 
     // 2. Prevent duplicate user registrations
-    const userExists = await User.findOne({ email })
+    const userExists = await User.findOne({ email: email.toLowerCase().trim() })
     if (userExists) {
         res.status(400)
         throw new Error('User already exists with this email')
@@ -30,18 +41,27 @@ const addUser = asyncHandler(async (req, res) => {
     const salt = await bcrypt.genSalt(10)
     const hashedPassword = await bcrypt.hash(password, salt)
 
-    // 4. Persistence
+    // 4. Persistence with physical dispatch attributes
     const user = await User.create({
-        userName,
-        email,
+        userName: userName.trim(),
+        email: email.toLowerCase().trim(),
         password: hashedPassword,
         role,
+        phone: phone?.trim() || null,
+        address: address?.trim() || null,
+        city: city?.trim() || null,
+        state: state?.trim() || null,
+        country: country?.trim() || 'India',
+        pincode: pincode?.trim() || null,
+        image: image?.trim() || null,
     })
 
-    // 5. RESTful 201 Created response (password omitted via schema toJSON transform)
+    // Fetch user without password hash for clean return
+    const createdUser = await User.findById(user._id).populate('role', 'role')
+
     res.status(201).json({
         success: true,
-        data: user,
+        data: createdUser,
     })
 })
 
@@ -51,8 +71,9 @@ const addUser = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 // ==========================================
 const getUsers = asyncHandler(async (req, res) => {
-    // Return empty array with 200 OK if no records exist (standard REST practice)
-    const users = await User.find({}).populate('role')
+    const users = await User.find({})
+        .populate('role', 'role')
+        .sort({ createdAt: -1 })
 
     res.status(200).json({
         success: true,
@@ -74,12 +95,18 @@ const loginUser = asyncHandler(async (req, res) => {
         throw new Error('Please provide email and password')
     }
 
-    // Explicitly demand the password hash (hidden by select: false in schema)
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email: email.toLowerCase().trim() })
         .select('+password')
         .populate('role')
 
     if (user && (await bcrypt.compare(password, user.password))) {
+        if (!user.isActive) {
+            res.status(403)
+            throw new Error(
+                'Your account has been deactivated. Please contact support.',
+            )
+        }
+
         // --- STRICT CONCURRENCY BLOCKER ---
         const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes
         if (
@@ -122,6 +149,12 @@ const loginUser = asyncHandler(async (req, res) => {
             userName: user.userName,
             email: user.email,
             role: roleName,
+            phone: user.phone,
+            address: user.address,
+            city: user.city,
+            state: user.state,
+            country: user.country,
+            pincode: user.pincode,
         })
     } else {
         res.status(401)
@@ -135,26 +168,22 @@ const loginUser = asyncHandler(async (req, res) => {
 // @access  Public / Authenticated
 // ==========================================
 const logoutUser = asyncHandler(async (req, res) => {
-    const token = req.cookies.jwt
+    const token = req.cookies?.jwt
 
     if (token) {
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET)
             const targetId = decoded.userId || decoded.id
 
-            // Invalidate session immediately:
-            // 1. Reset lastLogin to epoch (frees concurrency lock)
-            // 2. Increment tokenVersion (revokes copied token server-side)
             await User.findByIdAndUpdate(targetId, {
                 $set: { lastLogin: new Date(0) },
                 $inc: { tokenVersion: 1 },
             })
         } catch {
-            // If token expired or is malformed, proceed to clear client cookie
+            // Expired or malformed token
         }
     }
 
-    // Flags MUST mirror loginUser for the browser to match and purge the cookie
     res.cookie('jwt', '', {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -174,38 +203,60 @@ const logoutUser = asyncHandler(async (req, res) => {
 // @access  Private (Self or Admin)
 // ==========================================
 const editUser = asyncHandler(async (req, res) => {
-    const currentRoleName = req.user?.role?.name?.toLowerCase()
-    const isSelf = req.user?._id?.toString() === req.params.id
+    const { id } = req.params
 
-    // Authorization: User can update own profile, only admin can update others
-    if (currentRoleName !== 'admin' && !isSelf) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid user ID format')
+    }
+
+    const currentRoleName = (
+        req.user?.role?.role ||
+        req.user?.role ||
+        ''
+    ).toLowerCase()
+    const isSelf = req.user?._id?.toString() === id
+    const isAdmin = currentRoleName === 'admin'
+
+    if (!isAdmin && !isSelf) {
         res.status(403)
         throw new Error('Not authorized to edit this profile')
     }
 
-    const user = await User.findById(req.params.id)
+    const user = await User.findById(id)
     if (!user) {
         res.status(404)
         throw new Error('User not found')
     }
 
-    // Editable basic fields
-    user.firstName = req.body.firstName || user.firstName
-    user.lastName = req.body.lastName || user.lastName
-    user.email = req.body.email || user.email
-    user.image = req.body.image || user.image
-    user.address = req.body.address || user.address
-    user.city = req.body.city || user.city
-    user.pincode = req.body.pincode || user.pincode
-    user.phone = req.body.phone || user.phone
+    // Editable basic & physical dispatch fields
+    if (req.body.userName !== undefined)
+        user.userName = req.body.userName.trim()
+    if (req.body.email !== undefined)
+        user.email = req.body.email.toLowerCase().trim()
+    if (req.body.phone !== undefined)
+        user.phone = req.body.phone ? req.body.phone.trim() : null
+    if (req.body.address !== undefined)
+        user.address = req.body.address ? req.body.address.trim() : null
+    if (req.body.city !== undefined)
+        user.city = req.body.city ? req.body.city.trim() : null
+    if (req.body.state !== undefined)
+        user.state = req.body.state ? req.body.state.trim() : null
+    if (req.body.country !== undefined)
+        user.country = req.body.country ? req.body.country.trim() : 'India'
+    if (req.body.pincode !== undefined)
+        user.pincode = req.body.pincode ? req.body.pincode.trim() : null
+    if (req.body.image !== undefined)
+        user.image = req.body.image ? req.body.image.trim() : null
 
-    // Privileged fields: Only Admin can change roles or toggle active status
-    if (currentRoleName === 'admin') {
-        if (req.body.role) user.role = req.body.role
-        if (req.body.isActive !== undefined) user.isActive = req.body.isActive
+    // Privileged fields: strictly Admin only
+    if (isAdmin) {
+        if (req.body.role !== undefined) user.role = req.body.role
+        if (req.body.isActive !== undefined)
+            user.isActive = Boolean(req.body.isActive)
     }
 
-    // Password reset update
+    // Password update handler
     if (req.body.password) {
         const salt = await bcrypt.genSalt(10)
         user.password = await bcrypt.hash(req.body.password, salt)
@@ -215,7 +266,21 @@ const editUser = asyncHandler(async (req, res) => {
 
     res.status(200).json({
         success: true,
-        data: updatedUser,
+        message: 'Profile updated successfully',
+        data: {
+            _id: updatedUser._id,
+            userName: updatedUser.userName,
+            email: updatedUser.email,
+            role: updatedUser.role,
+            phone: updatedUser.phone,
+            address: updatedUser.address,
+            city: updatedUser.city,
+            state: updatedUser.state,
+            country: updatedUser.country,
+            pincode: updatedUser.pincode,
+            image: updatedUser.image,
+            isActive: updatedUser.isActive,
+        },
     })
 })
 
@@ -225,8 +290,14 @@ const editUser = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 // ==========================================
 const deleteUser = asyncHandler(async (req, res) => {
-    const user = await User.findById(req.params.id)
+    const { id } = req.params
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid user ID format')
+    }
+
+    const user = await User.findById(id)
     if (!user) {
         res.status(404)
         throw new Error('User not found')
@@ -239,31 +310,5 @@ const deleteUser = asyncHandler(async (req, res) => {
         message: 'User removed successfully',
     })
 })
-
-// ==========================================
-// @desc    Get all distinct role assignments
-// @route   GET /api/users/roles
-// @access  Private/Admin
-// ==========================================
-// const getRoles = asyncHandler(async (req, res) => {
-//     // Populate the distinct role references so frontend receives full role details
-//     const roleIds = await User.distinct('role')
-//     const usersWithRoles = await User.find({ role: { $in: roleIds } })
-//         .populate('role')
-//         .select('role')
-
-//     // Extract deduplicated role objects
-//     const uniqueRolesMap = new Map()
-//     usersWithRoles.forEach((u) => {
-//         if (u.role && !uniqueRolesMap.has(u.role._id.toString())) {
-//             uniqueRolesMap.set(u.role._id.toString(), u.role)
-//         }
-//     })
-
-//     res.status(200).json({
-//         success: true,
-//         data: Array.from(uniqueRolesMap.values()),
-//     })
-// })
 
 export { addUser, getUsers, loginUser, logoutUser, editUser, deleteUser }
