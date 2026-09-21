@@ -1,19 +1,20 @@
 // backend/route/bookingRoute.js
 
 import express from 'express'
-import { protect, admin, restrictTo } from '../middleware/appMiddleware.js'
 import {
     createBooking,
     getMyBookings,
     getEventBookings,
     updatePaymentStatus,
     updateDispatchStatus,
+    getShippingLabel,
     updateReceiveStatus,
     bulkUpdateReceiveStatus,
     cancelBooking,
     getDigitalEntryPass,
     verifyGateEntry,
 } from '../controller/bookingController.js'
+import { protect, admin, restrictTo } from '../middleware/appMiddleware.js'
 
 const router = express.Router()
 
@@ -30,6 +31,8 @@ router.get(
 )
 // Customer or Admin: retrieve entry pass
 router.get('/:id/entry-pass', protect, getDigitalEntryPass)
+// Shipping label preview route
+router.get('/:id/shipping-label', protect, getShippingLabel)
 
 // Bulk actions placed before parameterized :id routes
 router.patch(
