@@ -37,10 +37,14 @@ const Navbar = () => {
     const { theme, toggleTheme } = useTheme()
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-    // Dropdown states
+    // Dropdown states (Desktop)
     const [isEventsOpen, setIsEventsOpen] = useState(false)
     const [isCityOpen, setIsCityOpen] = useState(false)
     const [isAudiOpen, setIsAudiOpen] = useState(false)
+
+    // Mobile accordion states
+    const [mobileCategoriesOpen, setMobileCategoriesOpen] = useState(false)
+    const [mobileVenuesOpen, setMobileVenuesOpen] = useState(false)
 
     // Search input state
     const [searchParams] = useSearchParams()
@@ -64,11 +68,27 @@ const Navbar = () => {
         ),
     )
 
+    // Lock body scroll when mobile menu is open
+    useEffect(() => {
+        if (mobileMenuOpen) {
+            document.body.style.overflow = 'hidden'
+        } else {
+            document.body.style.overflow = 'unset'
+        }
+        return () => {
+            document.body.style.overflow = 'unset'
+        }
+    }, [mobileMenuOpen])
+
+    // Auto-close mobile drawer on route navigation
+    useEffect(() => {
+        setMobileMenuOpen(false)
+    }, [location.pathname])
+
     // =========================================================================
     // 1. LIVE / DEBOUNCED SEARCH ON TYPING (400ms delay)
     // =========================================================================
     useEffect(() => {
-        // Avoid running on component initial mount
         if (isFirstRender.current) {
             isFirstRender.current = false
             return
@@ -78,7 +98,6 @@ const Navbar = () => {
             const trimmed = keyword.trim()
             const currentParamKeyword = searchParams.get('keyword') || ''
 
-            // Only push route if text actually changed
             if (trimmed !== currentParamKeyword) {
                 const nextParams = new URLSearchParams(searchParams)
 
@@ -88,7 +107,6 @@ const Navbar = () => {
                     nextParams.delete('keyword')
                 }
 
-                // Navigate to /events with updated parameters
                 navigate(`/events?${nextParams.toString()}`)
             }
         }, 400)
@@ -96,7 +114,7 @@ const Navbar = () => {
         return () => clearTimeout(timer)
     }, [keyword]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Keep input in sync if user navigates away or clears URL filters
+    // Reset search keyword when leaving /events
     useEffect(() => {
         if (location.pathname !== '/events') {
             setKeyword('')
@@ -104,7 +122,7 @@ const Navbar = () => {
     }, [location.pathname])
 
     // =========================================================================
-    // 2. EXPLICIT FORM SUBMISSION (Clears input immediately on submit)
+    // 2. EXPLICIT FORM SUBMISSION
     // =========================================================================
     const handleSearchSubmit = (e) => {
         e.preventDefault()
@@ -119,7 +137,6 @@ const Navbar = () => {
             navigate('/events')
         }
 
-        // Reset input after search submission
         setKeyword('')
         setMobileMenuOpen(false)
     }
@@ -156,9 +173,9 @@ const Navbar = () => {
 
     return (
         <header className='sticky top-0 z-50 bg-base-100/95 backdrop-blur-md border-b border-base-content/10 shadow-sm transition-colors duration-200'>
-            <div className='max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-4'>
+            <div className='max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-3'>
                 {/* ================= LEFT: HAMBURGER & LOGO ================= */}
-                <div className='flex items-center gap-3'>
+                <div className='flex items-center gap-2 sm:gap-3'>
                     <div className='flex items-center lg:hidden'>
                         <button
                             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -166,7 +183,7 @@ const Navbar = () => {
                             aria-label='Toggle Navigation Menu'
                         >
                             {mobileMenuOpen ? (
-                                <X className='w-5 h-5' />
+                                <X className='w-5 h-5 text-base-content' />
                             ) : (
                                 <Menu className='w-5 h-5 text-base-content' />
                             )}
@@ -174,11 +191,11 @@ const Navbar = () => {
                     </div>
 
                     <Link to='/' className='flex items-center group py-1'>
-                        <div className='px-2.5 py-1 rounded-xl transition-all duration-200 bg-white/95 shadow-sm group-hover:scale-105 border border-black/5'>
+                        <div className='px-2 py-1 rounded-xl transition-all duration-200 bg-white/95 shadow-sm group-hover:scale-105 border border-black/5'>
                             <img
                                 src={logo}
                                 alt='EventPass'
-                                className='h-10 sm:h-11 w-auto object-contain block'
+                                className='h-8 sm:h-10 w-auto object-contain block'
                             />
                         </div>
                     </Link>
@@ -349,7 +366,7 @@ const Navbar = () => {
                     </nav>
                 </div>
 
-                {/* ================= CENTER: DEBOUNCED SEARCH BAR ================= */}
+                {/* ================= CENTER: DESKTOP SEARCH BAR ================= */}
                 <div className='hidden md:flex flex-1 max-w-sm mx-2'>
                     <form
                         onSubmit={handleSearchSubmit}
@@ -400,7 +417,7 @@ const Navbar = () => {
                         <div className='dropdown dropdown-end'>
                             <label
                                 tabIndex={0}
-                                className='btn btn-ghost btn-sm flex items-center gap-2 pl-2 pr-3 rounded-full border border-base-content/15 cursor-pointer'
+                                className='btn btn-ghost btn-sm flex items-center gap-2 pl-2 pr-2 sm:pr-3 rounded-full border border-base-content/15 cursor-pointer'
                             >
                                 <div className='w-7 h-7 rounded-full bg-primary text-primary-content flex items-center justify-center font-bold text-xs shadow-sm'>
                                     {userInfo.userName?.charAt(0).toUpperCase()}
@@ -483,7 +500,7 @@ const Navbar = () => {
                     ) : (
                         <Link
                             to='/login'
-                            className='btn btn-sm btn-primary rounded-xl px-4 sm:px-5 font-semibold shadow-sm'
+                            className='btn btn-sm btn-primary rounded-xl px-3 sm:px-5 font-semibold shadow-sm text-xs sm:text-sm'
                         >
                             Sign In
                         </Link>
@@ -491,74 +508,172 @@ const Navbar = () => {
                 </div>
             </div>
 
-            {/* ================= MOBILE MENU & MOBILE SEARCH ================= */}
+            {/* ================= MOBILE OVERLAY DRAWER ================= */}
             {mobileMenuOpen && (
-                <div className='lg:hidden bg-base-100 border-b border-base-content/10 px-4 py-4 space-y-4 shadow-xl'>
-                    <form
-                        onSubmit={handleSearchSubmit}
-                        className='relative flex items-center'
-                    >
-                        <input
-                            type='text'
-                            value={keyword}
-                            onChange={(e) => setKeyword(e.target.value)}
-                            placeholder='Type to search events...'
-                            className='w-full pl-3 pr-14 py-2 text-xs rounded-xl bg-base-200 border border-base-content/15 text-base-content placeholder-base-content/50 focus:outline-none focus:border-primary'
-                        />
-                        {keyword && (
+                <div className='lg:hidden fixed inset-0 top-16 z-40 flex flex-col'>
+                    {/* Backdrop */}
+                    <div
+                        onClick={() => setMobileMenuOpen(false)}
+                        className='fixed inset-0 top-16 bg-black/60 backdrop-blur-sm -z-10'
+                    />
+
+                    {/* Drawer Content */}
+                    <div className='bg-base-100 border-b border-base-content/10 px-4 py-4 space-y-4 shadow-2xl max-h-[calc(100vh-4rem)] overflow-y-auto animate-in slide-in-from-top-2 duration-200'>
+                        {/* Mobile Search Input */}
+                        <form
+                            onSubmit={handleSearchSubmit}
+                            className='relative flex items-center'
+                        >
+                            <input
+                                type='text'
+                                value={keyword}
+                                onChange={(e) => setKeyword(e.target.value)}
+                                placeholder='Type to search events...'
+                                className='w-full pl-3.5 pr-14 py-2 text-xs rounded-xl bg-base-200 border border-base-content/15 text-base-content placeholder-base-content/50 focus:outline-none focus:border-primary'
+                            />
+                            {keyword && (
+                                <button
+                                    type='button'
+                                    onClick={handleClearSearch}
+                                    className='absolute right-9 text-base-content/40 hover:text-base-content p-1'
+                                >
+                                    <X className='w-3.5 h-3.5' />
+                                </button>
+                            )}
                             <button
-                                type='button'
-                                onClick={handleClearSearch}
-                                className='absolute right-9 text-base-content/40 hover:text-base-content p-1'
+                                type='submit'
+                                className='absolute right-1 btn btn-xs btn-primary rounded-lg px-2 font-bold'
                             >
-                                <X className='w-3.5 h-3.5' />
+                                <Search className='w-3.5 h-3.5' />
                             </button>
-                        )}
-                        <button
-                            type='submit'
-                            className='absolute right-1 btn btn-xs btn-primary rounded-lg px-2 font-bold'
-                        >
-                            <Search className='w-3.5 h-3.5' />
-                        </button>
-                    </form>
+                        </form>
 
-                    <div className='space-y-1'>
-                        <Link
-                            to='/events?sort=highestRated'
-                            onClick={() => setMobileMenuOpen(false)}
-                            className='flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-base-200 font-semibold text-sm text-amber-500'
-                        >
-                            <Star className='w-4 h-4 fill-amber-500' /> Highest
-                            Rated Events
-                        </Link>
-                        <Link
-                            to='/events'
-                            onClick={() => setMobileMenuOpen(false)}
-                            className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm'
-                        >
-                            Browse All Events
-                        </Link>
-                    </div>
-
-                    {uniqueCities.length > 0 && (
-                        <div className='space-y-1 pt-2 border-t border-base-content/10'>
-                            <span className='text-xs font-bold uppercase tracking-wider text-base-content/50 block px-2 mb-1'>
-                                Cities
-                            </span>
-                            <div className='flex flex-wrap gap-1'>
-                                {uniqueCities.map((city) => (
-                                    <Link
-                                        key={city}
-                                        to={`/events?city=${encodeURIComponent(city)}`}
-                                        onClick={() => setMobileMenuOpen(false)}
-                                        className='px-2.5 py-1 rounded-lg bg-base-200 text-xs capitalize'
-                                    >
-                                        {city}
-                                    </Link>
-                                ))}
-                            </div>
+                        {/* Top Quick Links */}
+                        <div className='space-y-1 border-b border-base-content/10 pb-3'>
+                            <Link
+                                to='/events?sort=highestRated'
+                                onClick={() => setMobileMenuOpen(false)}
+                                className='flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-base-200 font-semibold text-sm text-amber-500'
+                            >
+                                <Star className='w-4 h-4 fill-amber-500' />{' '}
+                                Highest Rated Events
+                            </Link>
+                            <Link
+                                to='/events'
+                                onClick={() => setMobileMenuOpen(false)}
+                                className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm'
+                            >
+                                Browse All Events
+                            </Link>
                         </div>
-                    )}
+
+                        {/* Categories Accordion */}
+                        {categories.length > 0 && (
+                            <div className='border-b border-base-content/10 pb-3'>
+                                <button
+                                    onClick={() =>
+                                        setMobileCategoriesOpen((p) => !p)
+                                    }
+                                    className='w-full flex items-center justify-between px-2 py-1 text-xs font-bold uppercase tracking-wider text-base-content/70'
+                                >
+                                    <span className='flex items-center gap-1.5'>
+                                        <Calendar className='w-3.5 h-3.5 text-primary' />
+                                        Categories
+                                    </span>
+                                    <ChevronDown
+                                        className={`w-3.5 h-3.5 transition-transform ${mobileCategoriesOpen ? 'rotate-180' : ''}`}
+                                    />
+                                </button>
+                                {mobileCategoriesOpen && (
+                                    <div className='grid grid-cols-2 gap-1.5 mt-2 pt-1'>
+                                        {categories.map((cat) => (
+                                            <Link
+                                                key={cat._id}
+                                                to={`/events?category=${cat._id}`}
+                                                onClick={() =>
+                                                    setMobileMenuOpen(false)
+                                                }
+                                                className='px-2.5 py-1.5 rounded-lg bg-base-200/80 text-xs font-medium text-base-content capitalize truncate'
+                                            >
+                                                {cat.eventCategory}
+                                            </Link>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Venues Accordion */}
+                        {venues.length > 0 && (
+                            <div className='border-b border-base-content/10 pb-3'>
+                                <button
+                                    onClick={() =>
+                                        setMobileVenuesOpen((p) => !p)
+                                    }
+                                    className='w-full flex items-center justify-between px-2 py-1 text-xs font-bold uppercase tracking-wider text-base-content/70'
+                                >
+                                    <span className='flex items-center gap-1.5'>
+                                        <Building2 className='w-3.5 h-3.5 text-primary' />
+                                        Venues & Auditoriums
+                                    </span>
+                                    <ChevronDown
+                                        className={`w-3.5 h-3.5 transition-transform ${mobileVenuesOpen ? 'rotate-180' : ''}`}
+                                    />
+                                </button>
+                                {mobileVenuesOpen && (
+                                    <div className='space-y-2 mt-2 pt-1 max-h-48 overflow-y-auto'>
+                                        {venues.map((v) => (
+                                            <div
+                                                key={v._id}
+                                                className='space-y-1'
+                                            >
+                                                <span className='text-[11px] font-bold text-primary px-2 block truncate'>
+                                                    {v.name}
+                                                </span>
+                                                {v.auditoriums?.map((audi) => (
+                                                    <Link
+                                                        key={audi._id}
+                                                        to={`/events?auditoriumId=${audi._id}`}
+                                                        onClick={() =>
+                                                            setMobileMenuOpen(
+                                                                false,
+                                                            )
+                                                        }
+                                                        className='block px-4 py-1 text-xs text-base-content/80 hover:bg-base-200 rounded-lg truncate'
+                                                    >
+                                                        ↳ {audi.name}
+                                                    </Link>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Cities Pill Section */}
+                        {uniqueCities.length > 0 && (
+                            <div className='space-y-2 pt-1'>
+                                <span className='text-xs font-bold uppercase tracking-wider text-base-content/60 block px-2'>
+                                    Available Cities
+                                </span>
+                                <div className='flex flex-wrap gap-1.5 px-1'>
+                                    {uniqueCities.map((city) => (
+                                        <Link
+                                            key={city}
+                                            to={`/events?city=${encodeURIComponent(city)}`}
+                                            onClick={() =>
+                                                setMobileMenuOpen(false)
+                                            }
+                                            className='px-3 py-1 rounded-full bg-base-200 hover:bg-primary hover:text-primary-content text-xs font-medium capitalize transition-colors'
+                                        >
+                                            {city}
+                                        </Link>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </header>
