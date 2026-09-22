@@ -171,7 +171,24 @@ const EventDetails = () => {
                 paymentMode: 'upi',
             }).unwrap()
 
-            setConfirmedBookingData(res.data)
+            // Normalize response: handle both single object and array of bookings
+            const rawData = res.data
+            const bookingList = Array.isArray(rawData) ? rawData : [rawData]
+
+            const summaryData = {
+                bookings: bookingList,
+                tierSummary: bookingList
+                    .map((b) => `${b.tierName} × ${b.bookedQty}`)
+                    .join(', '),
+                totalAmount: bookingList.reduce(
+                    (sum, b) => sum + (b.totalAmount || 0),
+                    0,
+                ),
+                bookingStatus: bookingList[0]?.bookingStatus || 'request_sent',
+                paymentStatus: bookingList[0]?.paymentStatus || 'not_paid',
+            }
+
+            setConfirmedBookingData(summaryData)
             setBookingSuccessModal(true)
             setSelectedQuantities({})
         } catch (err) {
@@ -192,7 +209,6 @@ const EventDetails = () => {
             >
                 <ArrowLeft className='w-3.5 h-3.5' /> Back to Events
             </Link>
-
             {/* ================= HERO HEADER & POSTER ================= */}
             <div className='grid grid-cols-1 lg:grid-cols-12 gap-8 items-start'>
                 {/* Left: Poster Image */}
@@ -313,7 +329,6 @@ const EventDetails = () => {
                     </div>
                 </div>
             </div>
-
             {/* ================= TICKET TIER SELECTOR & SUMMARY ================= */}
             <div className='grid grid-cols-1 lg:grid-cols-12 gap-8 items-start pt-6 border-t border-base-content/10'>
                 {/* Tier Selection Cards (Left: 7 Cols) */}
@@ -510,24 +525,42 @@ const EventDetails = () => {
                     </div>
                 </div>
             </div>
-
-            {/* ================= SUCCESS CONFIRMATION MODAL ================= */}
-            {bookingSuccessModal && (
+            {/* ================= DYNAMIC SUCCESS & RESERVATION MODAL ================= */}
+            {bookingSuccessModal && confirmedBookingData && (
                 <div className='modal modal-open bg-black/70 backdrop-blur-sm z-50'>
                     <div className='modal-box max-w-md bg-base-100 border border-base-content/10 rounded-3xl p-6 text-center space-y-4 shadow-2xl'>
-                        <div className='w-14 h-14 rounded-2xl bg-success/20 text-success flex items-center justify-center mx-auto shadow-inner'>
-                            <CheckCircle2 className='w-8 h-8' />
+                        {/* Status Icon */}
+                        <div
+                            className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto shadow-inner ${
+                                confirmedBookingData.paymentStatus === 'paid'
+                                    ? 'bg-success/20 text-success'
+                                    : 'bg-amber-500/20 text-amber-500'
+                            }`}
+                        >
+                            {confirmedBookingData.paymentStatus === 'paid' ? (
+                                <CheckCircle2 className='w-8 h-8' />
+                            ) : (
+                                <Ticket className='w-8 h-8' />
+                            )}
                         </div>
-                        <h3 className='text-2xl font-black text-base-content'>
-                            Booking Confirmed!
-                        </h3>
-                        <p className='text-xs text-base-content/70 leading-relaxed'>
-                            Your seats have been reserved, payment verified, and
-                            anti-passback entry pass issued.
-                        </p>
 
-                        <div className='p-4 rounded-2xl bg-base-200 border border-base-content/10 text-left space-y-1.5 text-xs'>
-                            <div className='flex justify-between'>
+                        {/* Dynamic Title & Description */}
+                        <div>
+                            <h3 className='text-2xl font-black text-base-content'>
+                                {confirmedBookingData.paymentStatus === 'paid'
+                                    ? 'Booking Confirmed!'
+                                    : 'Seats Reserved!'}
+                            </h3>
+                            <p className='text-xs text-base-content/70 mt-1 leading-relaxed'>
+                                {confirmedBookingData.paymentStatus === 'paid'
+                                    ? 'Your payment has been verified and anti-passback entry pass is ready.'
+                                    : 'Your seats are locked. Please submit payment proof to generate your QR entry pass.'}
+                            </p>
+                        </div>
+
+                        {/* Document Details */}
+                        <div className='p-4 rounded-2xl bg-base-200 border border-base-content/10 text-left space-y-2 text-xs'>
+                            <div className='flex justify-between items-center'>
                                 <span className='text-base-content/60'>
                                     Event:
                                 </span>
@@ -535,40 +568,85 @@ const EventDetails = () => {
                                     {event.title}
                                 </span>
                             </div>
-                            <div className='flex justify-between'>
+
+                            <div className='flex justify-between items-center'>
                                 <span className='text-base-content/60'>
-                                    Date:
+                                    Tier & Qty:
                                 </span>
                                 <span className='font-bold text-base-content'>
-                                    {new Date(
-                                        event.startDate,
-                                    ).toLocaleDateString('en-IN', {
-                                        day: 'numeric',
-                                        month: 'short',
-                                        year: 'numeric',
-                                    })}
+                                    {confirmedBookingData.tierSummary}
                                 </span>
                             </div>
-                            <div className='flex justify-between'>
+
+                            <div className='flex justify-between items-center'>
                                 <span className='text-base-content/60'>
-                                    Status:
+                                    Total Payable:
                                 </span>
-                                <span className='badge badge-success badge-sm font-bold text-[10px]'>
-                                    CONFIRMED & ISSUED
+                                <span className='font-mono font-black text-primary text-sm'>
+                                    ₹
+                                    {confirmedBookingData.totalAmount?.toLocaleString(
+                                        'en-IN',
+                                    )}
+                                </span>
+                            </div>
+
+                            <div className='flex justify-between items-center pt-1 border-t border-base-content/10'>
+                                <span className='text-base-content/60'>
+                                    Booking State:
+                                </span>
+                                <span className='badge badge-neutral badge-sm font-mono font-bold uppercase text-[10px] px-2.5 py-1'>
+                                    {confirmedBookingData.bookingStatus?.replace(
+                                        '_',
+                                        ' ',
+                                    )}
+                                </span>
+                            </div>
+
+                            <div className='flex justify-between items-center'>
+                                <span className='text-base-content/60'>
+                                    Payment:
+                                </span>
+                                <span
+                                    className={`badge badge-sm font-mono font-bold uppercase text-[10px] px-2.5 py-1 ${
+                                        confirmedBookingData.paymentStatus ===
+                                        'paid'
+                                            ? 'badge-success'
+                                            : 'badge-warning text-warning-content'
+                                    }`}
+                                >
+                                    {confirmedBookingData.paymentStatus?.replace(
+                                        '_',
+                                        ' ',
+                                    )}
                                 </span>
                             </div>
                         </div>
 
+                        {/* Action Buttons */}
                         <div className='pt-2 flex flex-col gap-2'>
                             <button
                                 onClick={() => navigate('/my-bookings')}
-                                className='btn btn-primary w-full rounded-xl font-bold gap-2'
+                                className='btn btn-primary w-full rounded-xl font-bold gap-2 shadow-md shadow-primary/20'
                             >
-                                <QrCode className='w-4 h-4' /> View My Entry
-                                Pass
+                                {confirmedBookingData.paymentStatus ===
+                                'paid' ? (
+                                    <>
+                                        <QrCode className='w-4 h-4' /> View My
+                                        Entry Pass
+                                    </>
+                                ) : (
+                                    <>
+                                        <Ticket className='w-4 h-4' /> Submit
+                                        Payment & View Bookings
+                                    </>
+                                )}
                             </button>
+
                             <button
-                                onClick={() => setBookingSuccessModal(false)}
+                                onClick={() => {
+                                    setBookingSuccessModal(false)
+                                    setConfirmedBookingData(null)
+                                }}
                                 className='btn btn-ghost w-full rounded-xl text-xs text-base-content/60'
                             >
                                 Close & Keep Browsing
@@ -577,7 +655,6 @@ const EventDetails = () => {
                     </div>
                 </div>
             )}
-
             {/* ================= REVIEWS SECTION ================= */}
             <div className='pt-8 border-t border-base-content/10 space-y-8'>
                 <div className='flex flex-col sm:flex-row sm:items-center justify-between gap-3'>

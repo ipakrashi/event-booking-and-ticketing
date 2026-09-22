@@ -134,7 +134,7 @@ const RegisterScreen = () => {
                                     type='text'
                                     required
                                     className='grow text-sm bg-transparent focus:outline-none w-full'
-                                    placeholder='John Doe'
+                                    placeholder='Indranil Pakrashi'
                                     value={userName}
                                     onChange={(e) =>
                                         setUserName(e.target.value)

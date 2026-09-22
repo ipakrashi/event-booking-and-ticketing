@@ -126,7 +126,6 @@ const bookingSchema = new mongoose.Schema(
         entryPassToken: {
             type: String,
             trim: true,
-            default: null,
             sparse: true,
             unique: true,
         },

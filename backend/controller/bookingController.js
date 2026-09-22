@@ -118,7 +118,7 @@ export const createBooking = asyncHandler(async (req, res) => {
             const unitPrice = tier.price
             const totalAmount = unitPrice * item.quantity
 
-            // STRICT INITIALIZATION: 'request_sent', 'not_paid', no pass token
+            // STRICT INITIALIZATION: 'request_sent', 'not_paid'
             const booking = await Booking.create({
                 user: userId,
                 event: eventId,
@@ -134,9 +134,8 @@ export const createBooking = asyncHandler(async (req, res) => {
                     trxnId: null,
                 },
                 despatchStatus: 'not_dispatched',
-                entryPassToken: null,
+                // entryPassToken is intentionally omitted until payment is confirmed
             })
-
             createdBookings.push(booking)
         }
     } catch (err) {
