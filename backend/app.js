@@ -50,18 +50,13 @@ app.use('/api/banners', bannerRoute)
 app.use('/api/newsletter', newsletterRoute)
 
 // Production Static Serving
+// Express 5 compatible catch-all:
 if (process.env.NODE_ENV === 'production') {
-    // Correct folder name: '../frontend/dist'
     const frontendBuildPath = path.join(__dirname, '../frontend/dist')
     app.use(express.static(frontendBuildPath))
 
-    // Catch-all route to serve Vite index.html for client-side routing
-    app.get('*', (req, res) => {
+    app.get('/{*splat}', (req, res) => {
         res.sendFile(path.join(frontendBuildPath, 'index.html'))
-    })
-} else {
-    app.get('/', (req, res) => {
-        res.send('API is running...')
     })
 }
 
