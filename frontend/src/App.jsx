@@ -22,6 +22,7 @@ import AdminEventsScreen from './pages/admin/AdminEventsScreen'
 import AdminEditEventScreen from './pages/admin/AdminEditEventScreen'
 import AdminCreateBannerScreen from './pages/admin/AdminCreateBannerScreen'
 import AdminReviewsScreen from './pages/admin/AdminReviewsScreen'
+import AdminPayoutsScreen from './pages/admin/AdminPayoutsScreen'
 
 const App = () => {
     return (
@@ -80,6 +81,10 @@ const App = () => {
                     <Route
                         path='/admin/reviews'
                         element={<AdminReviewsScreen />}
+                    />
+                    <Route
+                        path='/admin/payouts'
+                        element={<AdminPayoutsScreen />}
                     />
                 </Routes>
             </main>

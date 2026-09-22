@@ -36,6 +36,7 @@ import {
     CalendarPlus,
     CalendarRange,
     MessageSquare,
+    DollarSign,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -544,6 +545,15 @@ const Navbar = () => {
                                                 Create Hero Banner
                                             </Link>
                                         </li>
+                                        <li>
+                                            <Link
+                                                to='/admin/payouts'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <DollarSign className='w-4 h-4 text-primary' />{' '}
+                                                Payouts & Finance
+                                            </Link>
+                                        </li>
                                     </>
                                 )}
 
@@ -667,6 +677,14 @@ const Navbar = () => {
                                 >
                                     <ScanLine className='w-4 h-4' />
                                     <span>Launch QR Scanner</span>
+                                </Link>
+
+                                <Link
+                                    to='/admin/payouts'
+                                    className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
+                                >
+                                    <DollarSign className='w-4 h-4 text-primary' />{' '}
+                                    Payouts & Finance
                                 </Link>
                             </div>
                         )}
