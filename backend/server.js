@@ -1,6 +1,6 @@
 import dns from 'dns'
 import app from './app.js'
-import connectDB from './util/connectDb.js'
+import connectDB from './util/connectDB.js'
 
 dns.setServers(['8.8.8.8', '8.8.4.4'])
 
