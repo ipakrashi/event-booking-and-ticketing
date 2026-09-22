@@ -42,7 +42,7 @@ const Navbar = () => {
     const [isCityOpen, setIsCityOpen] = useState(false)
     const [isAudiOpen, setIsAudiOpen] = useState(false)
 
-    // Mobile accordion states
+    // Accordions inside Mobile Drawer
     const [mobileCategoriesOpen, setMobileCategoriesOpen] = useState(false)
     const [mobileVenuesOpen, setMobileVenuesOpen] = useState(false)
 
@@ -68,7 +68,12 @@ const Navbar = () => {
         ),
     )
 
-    // Lock body scroll when mobile menu is open
+    // Auto-close drawer on location / route change
+    useEffect(() => {
+        setMobileMenuOpen(false)
+    }, [location.pathname])
+
+    // Body scroll lock when mobile drawer is open
     useEffect(() => {
         if (mobileMenuOpen) {
             document.body.style.overflow = 'hidden'
@@ -80,14 +85,7 @@ const Navbar = () => {
         }
     }, [mobileMenuOpen])
 
-    // Auto-close mobile drawer on route navigation
-    useEffect(() => {
-        setMobileMenuOpen(false)
-    }, [location.pathname])
-
-    // =========================================================================
-    // 1. LIVE / DEBOUNCED SEARCH ON TYPING (400ms delay)
-    // =========================================================================
+    // Live search debounce (desktop)
     useEffect(() => {
         if (isFirstRender.current) {
             isFirstRender.current = false
@@ -114,16 +112,12 @@ const Navbar = () => {
         return () => clearTimeout(timer)
     }, [keyword]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Reset search keyword when leaving /events
     useEffect(() => {
         if (location.pathname !== '/events') {
             setKeyword('')
         }
     }, [location.pathname])
 
-    // =========================================================================
-    // 2. EXPLICIT FORM SUBMISSION
-    // =========================================================================
     const handleSearchSubmit = (e) => {
         e.preventDefault()
         const trimmed = keyword.trim()
@@ -172,23 +166,23 @@ const Navbar = () => {
     ).toLowerCase()
 
     return (
-        <header className='sticky top-0 z-100 bg-base-100/95 backdrop-blur-md border-b border-base-content/10 shadow-sm'>
+        <header className='sticky top-0 z-50 bg-base-100 border-b border-base-content/10 shadow-sm transition-colors duration-200'>
+            {/* Top Navigation Row */}
             <div className='max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-3'>
-                {/* ================= LEFT: HAMBURGER & LOGO ================= */}
-                <div className='flex items-center gap-2 sm:gap-3'>
-                    <div className='flex items-center lg:hidden'>
-                        <button
-                            onClick={() => setMobileMenuOpen((prev) => !prev)}
-                            className='btn btn-ghost btn-sm btn-square lg:hidden'
-                            aria-label='Toggle Navigation Menu'
-                        >
-                            {mobileMenuOpen ? (
-                                <X className='w-5 h-5 text-base-content' />
-                            ) : (
-                                <Menu className='w-5 h-5 text-base-content' />
-                            )}
-                        </button>
-                    </div>
+                {/* Left: Mobile Hamburger Toggle + Brand Logo */}
+                <div className='flex items-center gap-2 sm:gap-4'>
+                    <button
+                        type='button'
+                        onClick={() => setMobileMenuOpen((prev) => !prev)}
+                        className='lg:hidden p-2 -ml-2 rounded-lg text-base-content hover:bg-base-200 transition-colors'
+                        aria-label='Toggle Navigation'
+                    >
+                        {mobileMenuOpen ? (
+                            <X className='w-6 h-6' />
+                        ) : (
+                            <Menu className='w-6 h-6' />
+                        )}
+                    </button>
 
                     <Link to='/' className='flex items-center group py-1'>
                         <div className='px-2 py-1 rounded-xl transition-all duration-200 bg-white/95 shadow-sm group-hover:scale-105 border border-black/5'>
@@ -202,7 +196,7 @@ const Navbar = () => {
 
                     <div className='hidden lg:block h-7 border-l border-base-content/20 mx-1'></div>
 
-                    {/* Desktop Nav Links */}
+                    {/* Desktop Navigation Links */}
                     <nav className='hidden lg:flex items-center gap-1'>
                         {/* Categories Dropdown */}
                         <div
@@ -366,7 +360,7 @@ const Navbar = () => {
                     </nav>
                 </div>
 
-                {/* ================= CENTER: DESKTOP SEARCH BAR ================= */}
+                {/* Center: Desktop Search Bar (Hidden on Mobile) */}
                 <div className='hidden md:flex flex-1 max-w-sm mx-2'>
                     <form
                         onSubmit={handleSearchSubmit}
@@ -399,7 +393,7 @@ const Navbar = () => {
                     </form>
                 </div>
 
-                {/* ================= RIGHT: THEME TOGGLE & AUTH ================= */}
+                {/* Right: Theme Toggle & User Auth */}
                 <div className='flex items-center gap-2 sm:gap-3'>
                     <button
                         onClick={toggleTheme}
@@ -508,18 +502,11 @@ const Navbar = () => {
                 </div>
             </div>
 
-            {/* ================= MOBILE OVERLAY DRAWER ================= */}
+            {/* ================= MOBILE DRAWER OVERLAY ================= */}
             {mobileMenuOpen && (
-                <div className='lg:hidden fixed inset-0 top-16 z-40 flex flex-col'>
-                    {/* Backdrop */}
-                    <div
-                        onClick={() => setMobileMenuOpen(false)}
-                        className='fixed inset-0 top-16 bg-black/60 backdrop-blur-sm -z-10'
-                    />
-
-                    {/* Drawer Content */}
-                    <div className='bg-base-100 border-b border-base-content/10 px-4 py-4 space-y-4 shadow-2xl max-h-[calc(100vh-4rem)] overflow-y-auto animate-in slide-in-from-top-2 duration-200'>
-                        {/* Mobile Search Input */}
+                <div className='lg:hidden fixed inset-x-0 top-16 bottom-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col justify-start animate-in fade-in duration-150'>
+                    <div className='bg-base-100 border-b border-base-content/15 p-4 space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl'>
+                        {/* Mobile Search Bar inside the Drawer */}
                         <form
                             onSubmit={handleSearchSubmit}
                             className='relative flex items-center'
@@ -528,7 +515,7 @@ const Navbar = () => {
                                 type='text'
                                 value={keyword}
                                 onChange={(e) => setKeyword(e.target.value)}
-                                placeholder='Type to search events...'
+                                placeholder='Search events, venues, cities...'
                                 className='w-full pl-3.5 pr-14 py-2 text-xs rounded-xl bg-base-200 border border-base-content/15 text-base-content placeholder-base-content/50 focus:outline-none focus:border-primary'
                             />
                             {keyword && (
@@ -542,13 +529,13 @@ const Navbar = () => {
                             )}
                             <button
                                 type='submit'
-                                className='absolute right-1 btn btn-xs btn-primary rounded-lg px-2 font-bold'
+                                className='absolute right-1 btn btn-xs btn-primary rounded-lg px-2.5 font-bold'
                             >
                                 <Search className='w-3.5 h-3.5' />
                             </button>
                         </form>
 
-                        {/* Top Quick Links */}
+                        {/* Quick Links */}
                         <div className='space-y-1 border-b border-base-content/10 pb-3'>
                             <Link
                                 to='/events?sort=highestRated'
@@ -561,7 +548,7 @@ const Navbar = () => {
                             <Link
                                 to='/events'
                                 onClick={() => setMobileMenuOpen(false)}
-                                className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm'
+                                className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm text-base-content'
                             >
                                 Browse All Events
                             </Link>
@@ -571,13 +558,14 @@ const Navbar = () => {
                         {categories.length > 0 && (
                             <div className='border-b border-base-content/10 pb-3'>
                                 <button
+                                    type='button'
                                     onClick={() =>
                                         setMobileCategoriesOpen((p) => !p)
                                     }
                                     className='w-full flex items-center justify-between px-2 py-1 text-xs font-bold uppercase tracking-wider text-base-content/70'
                                 >
                                     <span className='flex items-center gap-1.5'>
-                                        <Calendar className='w-3.5 h-3.5 text-primary' />
+                                        <Calendar className='w-3.5 h-3.5 text-primary' />{' '}
                                         Categories
                                     </span>
                                     <ChevronDown
@@ -607,13 +595,14 @@ const Navbar = () => {
                         {venues.length > 0 && (
                             <div className='border-b border-base-content/10 pb-3'>
                                 <button
+                                    type='button'
                                     onClick={() =>
                                         setMobileVenuesOpen((p) => !p)
                                     }
                                     className='w-full flex items-center justify-between px-2 py-1 text-xs font-bold uppercase tracking-wider text-base-content/70'
                                 >
                                     <span className='flex items-center gap-1.5'>
-                                        <Building2 className='w-3.5 h-3.5 text-primary' />
+                                        <Building2 className='w-3.5 h-3.5 text-primary' />{' '}
                                         Venues & Auditoriums
                                     </span>
                                     <ChevronDown
