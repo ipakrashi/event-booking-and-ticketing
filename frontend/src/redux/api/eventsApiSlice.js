@@ -65,6 +65,24 @@ export const eventsApiSlice = apiSlice.injectEndpoints({
                 'Event',
             ],
         }),
+        getMyReviewStatus: builder.query({
+            query: (eventId) => `/api/events/${eventId}/reviews/my-status`,
+            providesTags: (result, error, eventId) => [
+                { type: 'EventReview', id: `status-${eventId}` },
+            ],
+        }),
+        getEventReviewsForModeration: builder.query({
+            query: (eventId) => `/api/events/${eventId}/reviews/admin`,
+            providesTags: ['EventReview'],
+        }),
+        moderateReview: builder.mutation({
+            query: ({ eventId, reviewId, status, moderationRemarks }) => ({
+                url: `/api/events/${eventId}/reviews/${reviewId}/moderate`,
+                method: 'PUT',
+                body: { status, moderationRemarks },
+            }),
+            invalidatesTags: ['EventReview', 'Event'],
+        }),
     }),
 })
 
@@ -77,4 +95,10 @@ export const {
     useGetEventReviewsQuery,
     useGetLatestReviewsQuery,
     useCreateEventReviewMutation,
+    useGetMyReviewStatusQuery,
+    useGetEventReviewsForModerationQuery,
+    useModerateReviewMutation,
 } = eventsApiSlice
+
+// Backward-compatibility alias
+export const useGetAllEventsQuery = eventsApiSlice.endpoints.getEvents.useQuery

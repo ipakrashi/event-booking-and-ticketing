@@ -7,8 +7,10 @@ import {
     useGetEventByIdQuery,
     useGetEventReviewsQuery,
     useCreateEventReviewMutation,
+    useGetMyReviewStatusQuery,
 } from '../redux/api/eventsApiSlice'
 import { useCreateBookingMutation } from '../redux/api/bookingsApiSlice'
+
 import {
     MapPin,
     Calendar,
@@ -64,6 +66,9 @@ const EventDetails = () => {
             return { ...prev, [tierId]: next }
         })
     }
+    const { data: myReviewStatusData, isLoading: loadingReviewStatus } =
+        useGetMyReviewStatusQuery(id, { skip: !userInfo })
+    const myReviewStatus = myReviewStatusData || {}
 
     const handleReviewSubmit = async (e) => {
         e.preventDefault()
@@ -769,15 +774,19 @@ const EventDetails = () => {
                                 Leave Verified Feedback
                             </h3>
                             <p className='text-xs text-base-content/60 mt-1'>
-                                Reviews are restricted to attendees who hold a
-                                paid booking.
+                                Reviews are restricted to verified attendees who
+                                checked in at the event. Submissions are
+                                published upon organizer approval.
                             </p>
                         </div>
 
                         {reviewSuccess && (
                             <div className='p-3 rounded-xl bg-success/10 border border-success/30 text-success text-xs flex items-center gap-2'>
                                 <ShieldCheck className='w-4 h-4 shrink-0' />
-                                <span>Your review has been submitted!</span>
+                                <span>
+                                    Your review was submitted and is pending
+                                    organizer approval!
+                                </span>
                             </div>
                         )}
 
@@ -789,74 +798,126 @@ const EventDetails = () => {
                         )}
 
                         {userInfo ? (
-                            <form
-                                onSubmit={handleReviewSubmit}
-                                className='space-y-4'
-                            >
-                                <div>
-                                    <label className='text-xs font-semibold text-base-content/70 block mb-1'>
-                                        Rating
-                                    </label>
-                                    <div className='flex items-center gap-2'>
-                                        {[1, 2, 3, 4, 5].map((num) => (
-                                            <button
-                                                key={num}
-                                                type='button'
-                                                onClick={() => setRating(num)}
-                                                className='p-1 text-amber-400 hover:scale-110 transition-transform'
-                                            >
-                                                <Star
-                                                    className={`w-6 h-6 ${
-                                                        num <= rating
-                                                            ? 'fill-amber-400'
-                                                            : 'text-base-content/20'
-                                                    }`}
-                                                />
-                                            </button>
-                                        ))}
-                                        <span className='text-xs font-mono font-bold text-base-content ml-2'>
-                                            {rating} / 5 Stars
-                                        </span>
-                                    </div>
+                            myReviewStatus.hasReviewed ? (
+                                <div className='p-6 text-center space-y-3 bg-base-200/50 rounded-2xl border border-base-content/10'>
+                                    <CheckCircle2 className='w-8 h-8 text-success mx-auto' />
+                                    <h4 className='font-bold text-sm text-base-content'>
+                                        Feedback Recorded
+                                    </h4>
+                                    <p className='text-xs text-base-content/60'>
+                                        You have already submitted a review for
+                                        this event.
+                                    </p>
+                                    <span
+                                        className={`badge badge-sm font-bold uppercase text-[10px] ${
+                                            myReviewStatus.reviewStatus ===
+                                            'approved'
+                                                ? 'badge-success'
+                                                : myReviewStatus.reviewStatus ===
+                                                    'rejected'
+                                                  ? 'badge-error'
+                                                  : 'badge-warning text-warning-content'
+                                        }`}
+                                    >
+                                        Status:{' '}
+                                        {myReviewStatus.reviewStatus?.replace(
+                                            '_',
+                                            ' ',
+                                        )}
+                                    </span>
                                 </div>
-
-                                <div>
-                                    <label className='text-xs font-semibold text-base-content/70 block mb-1'>
-                                        Your Review
-                                    </label>
-                                    <textarea
-                                        rows={4}
-                                        value={comment}
-                                        onChange={(e) =>
-                                            setComment(e.target.value)
-                                        }
-                                        placeholder='Share your experience regarding seating, acoustics, or venue entry...'
-                                        className='w-full rounded-xl bg-base-200 border border-base-content/10 p-3 text-xs text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-primary transition-colors'
-                                    />
+                            ) : !myReviewStatus.hasAttended ? (
+                                <div className='p-6 text-center space-y-3 bg-base-200/50 rounded-2xl border border-base-content/10'>
+                                    <Ticket className='w-8 h-8 text-base-content/40 mx-auto' />
+                                    <h4 className='font-bold text-sm text-base-content'>
+                                        Attendance Verification Required
+                                    </h4>
+                                    <p className='text-xs text-base-content/60 leading-relaxed'>
+                                        Only attendees whose entry passes were
+                                        scanned and admitted at the venue are
+                                        eligible to leave reviews.
+                                    </p>
+                                    <button
+                                        type='button'
+                                        disabled
+                                        className='btn btn-disabled w-full rounded-xl text-xs'
+                                    >
+                                        Review Locked
+                                    </button>
                                 </div>
-
-                                <button
-                                    type='submit'
-                                    disabled={submittingReview}
-                                    className='btn btn-primary w-full rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50'
+                            ) : (
+                                <form
+                                    onSubmit={handleReviewSubmit}
+                                    className='space-y-4'
                                 >
-                                    {submittingReview ? (
-                                        <>
-                                            <Loader2 className='w-4 h-4 animate-spin' />{' '}
-                                            Submitting...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Send className='w-4 h-4' /> Submit
-                                            Review
-                                        </>
-                                    )}
-                                </button>
-                            </form>
+                                    <div>
+                                        <label className='text-xs font-semibold text-base-content/70 block mb-1'>
+                                            Rating
+                                        </label>
+                                        <div className='flex items-center gap-2'>
+                                            {[1, 2, 3, 4, 5].map((num) => (
+                                                <button
+                                                    key={num}
+                                                    type='button'
+                                                    onClick={() =>
+                                                        setRating(num)
+                                                    }
+                                                    className='p-1 text-amber-400 hover:scale-110 transition-transform'
+                                                >
+                                                    <Star
+                                                        className={`w-6 h-6 ${
+                                                            num <= rating
+                                                                ? 'fill-amber-400'
+                                                                : 'text-base-content/20'
+                                                        }`}
+                                                    />
+                                                </button>
+                                            ))}
+                                            <span className='text-xs font-mono font-bold text-base-content ml-2'>
+                                                {rating} / 5 Stars
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className='text-xs font-semibold text-base-content/70 block mb-1'>
+                                            Your Review
+                                        </label>
+                                        <textarea
+                                            rows={4}
+                                            value={comment}
+                                            onChange={(e) =>
+                                                setComment(e.target.value)
+                                            }
+                                            placeholder='Share your verified experience regarding acoustics, seating, or performance...'
+                                            className='w-full rounded-xl bg-base-200 border border-base-content/10 p-3 text-xs text-base-content placeholder:text-base-content/40 focus:outline-none focus:border-primary transition-colors'
+                                        />
+                                    </div>
+
+                                    <button
+                                        type='submit'
+                                        disabled={submittingReview}
+                                        className='btn btn-primary w-full rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50'
+                                    >
+                                        {submittingReview ? (
+                                            <>
+                                                <Loader2 className='w-4 h-4 animate-spin' />
+                                                Submitting...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Send className='w-4 h-4' />{' '}
+                                                Submit Review for Approval
+                                            </>
+                                        )}
+                                    </button>
+                                </form>
+                            )
                         ) : (
                             <div className='py-6 text-center space-y-3'>
                                 <p className='text-xs text-base-content/60'>
-                                    You must be signed in to submit a review.
+                                    You must be signed in with an attended
+                                    booking to submit a review.
                                 </p>
                                 <Link
                                     to='/login'

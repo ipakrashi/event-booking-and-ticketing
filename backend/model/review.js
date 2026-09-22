@@ -38,6 +38,22 @@ const reviewSchema = new mongoose.Schema(
             type: Boolean,
             default: true,
         },
+        status: {
+            type: String,
+            enum: ['pending', 'approved', 'rejected', 'on_hold'],
+            default: 'pending',
+            index: true,
+        },
+        moderatedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null,
+        },
+        moderationRemarks: {
+            type: String,
+            trim: true,
+            default: null,
+        },
     },
     {
         timestamps: true,
@@ -46,12 +62,16 @@ const reviewSchema = new mongoose.Schema(
 
 // Invariant: Single review per user per event
 reviewSchema.index({ event: 1, user: 1 }, { unique: true })
+reviewSchema.index({ event: 1, status: 1 })
 
-// Static Method: Atomic aggregation pipeline to update Event document
+// Static Method: Atomic aggregation pipeline counting ONLY APPROVED reviews
 reviewSchema.statics.calcAverageRatings = async function (eventId) {
     const stats = await this.aggregate([
         {
-            $match: { event: new mongoose.Types.ObjectId(eventId) },
+            $match: {
+                event: new mongoose.Types.ObjectId(eventId),
+                status: 'approved',
+            },
         },
         {
             $group: {
@@ -68,7 +88,6 @@ reviewSchema.statics.calcAverageRatings = async function (eventId) {
             totalReviews: stats[0].totalReviews,
         })
     } else {
-        // Reset to default if all reviews were deleted
         await Event.findByIdAndUpdate(eventId, {
             averageRating: 0,
             totalReviews: 0,
@@ -76,7 +95,7 @@ reviewSchema.statics.calcAverageRatings = async function (eventId) {
     }
 }
 
-// Post-save hook (covers both create and update)
+// Post-save hook (recalculates whenever created, approved, or rejected)
 reviewSchema.post('save', async function () {
     await this.constructor.calcAverageRatings(this.event)
 })

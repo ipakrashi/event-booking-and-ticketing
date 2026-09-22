@@ -9,20 +9,18 @@ import Booking from '../model/booking.js'
 // ============================================================================
 // @desc    Add / Create a Review for an Event
 // @route   POST /api/events/:eventId/reviews
-// @access  Private (Verified Attendees)
+// @access  Private (Verified Attendees with confirmed gate check-in)
 // ============================================================================
 export const createEventReview = asyncHandler(async (req, res) => {
     const { eventId } = req.params
     const { rating, comment } = req.body
     const userId = req.user._id
 
-    // 1. Validate ID format
     if (!mongoose.Types.ObjectId.isValid(eventId)) {
         res.status(400)
         throw new Error('Invalid Event ID format')
     }
 
-    // 2. Validate payload invariants
     const numericRating = Number(rating)
     if (!numericRating || numericRating < 1 || numericRating > 5) {
         res.status(400)
@@ -34,29 +32,29 @@ export const createEventReview = asyncHandler(async (req, res) => {
         throw new Error('Review comment must be at least 5 characters long')
     }
 
-    // 3. Confirm target event exists and is not a draft
     const event = await Event.findById(eventId)
     if (!event || event.status === 'draft') {
         res.status(404)
         throw new Error('Event not found or not currently published')
     }
 
-    // 4. Invariant Check: Verify user is a genuine attendee with a confirmed/paid booking
-    const userBooking = await Booking.findOne({
+    // 1. Invariant: User must have physically attended (paid, confirmed, and scanned at gate)
+    const attendeeBooking = await Booking.findOne({
         user: userId,
         event: eventId,
         paymentStatus: 'paid',
-        bookingStatus: { $in: ['confirmed', 'request_sent'] },
+        bookingStatus: 'confirmed',
+        isCheckedIn: true,
     })
 
-    if (!userBooking) {
+    if (!attendeeBooking) {
         res.status(403)
         throw new Error(
-            'Action forbidden: Only verified attendees with paid bookings can submit a review.',
+            'Reviews are restricted to attendees who held a paid booking and checked in at the venue.',
         )
     }
 
-    // 5. Invariant Check: Prevent duplicate reviews
+    // 2. Invariant: Prevent duplicate reviews
     const existingReview = await Review.findOne({
         event: eventId,
         user: userId,
@@ -67,13 +65,14 @@ export const createEventReview = asyncHandler(async (req, res) => {
         throw new Error('You have already submitted a review for this event')
     }
 
-    // 6. Create Review (Triggers static calcAverageRatings post-save hook)
+    // 3. Create Review in 'pending' status
     const review = await Review.create({
         user: userId,
         event: eventId,
         rating: numericRating,
         comment: comment.trim(),
         isVerifiedAttendee: true,
+        status: 'pending',
     })
 
     const populatedReview = await Review.findById(review._id).populate(
@@ -83,13 +82,14 @@ export const createEventReview = asyncHandler(async (req, res) => {
 
     res.status(201).json({
         success: true,
-        message: 'Review recorded successfully',
+        message:
+            'Review submitted successfully! It will be published once reviewed by the organizer.',
         data: populatedReview,
     })
 })
 
 // ============================================================================
-// @desc    Get All Reviews for an Event
+// @desc    Get All Approved Reviews for an Event (Public View)
 // @route   GET /api/events/:eventId/reviews
 // @access  Public
 // ============================================================================
@@ -101,7 +101,8 @@ export const getEventReviews = asyncHandler(async (req, res) => {
         throw new Error('Invalid Event ID format')
     }
 
-    const reviews = await Review.find({ event: eventId })
+    // Only return approved reviews to public attendees
+    const reviews = await Review.find({ event: eventId, status: 'approved' })
         .populate('user', 'userName')
         .sort({ createdAt: -1 })
 
@@ -113,6 +114,137 @@ export const getEventReviews = asyncHandler(async (req, res) => {
 })
 
 // ============================================================================
+// @desc    Check logged-in user's review status & attendance for an event
+// @route   GET /api/events/:eventId/reviews/my-status
+// @access  Private
+// ============================================================================
+export const getMyReviewStatus = asyncHandler(async (req, res) => {
+    const { eventId } = req.params
+    const userId = req.user._id
+
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+        res.status(400)
+        throw new Error('Invalid Event ID format')
+    }
+
+    // Check attendance check-in
+    const attendedBooking = await Booking.findOne({
+        user: userId,
+        event: eventId,
+        paymentStatus: 'paid',
+        bookingStatus: 'confirmed',
+        isCheckedIn: true,
+    })
+
+    // Check if review already submitted
+    const existingReview = await Review.findOne({
+        event: eventId,
+        user: userId,
+    })
+
+    res.status(200).json({
+        success: true,
+        hasAttended: !!attendedBooking,
+        hasReviewed: !!existingReview,
+        reviewStatus: existingReview ? existingReview.status : null,
+        review: existingReview || null,
+    })
+})
+
+// ============================================================================
+// @desc    Get All Reviews for Moderation (Admin / Event Organizer)
+// @route   GET /api/events/:eventId/reviews/admin
+// @access  Private (Admin / Organizer)
+// ============================================================================
+export const getEventReviewsForModeration = asyncHandler(async (req, res) => {
+    const { eventId } = req.params
+
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+        res.status(400)
+        throw new Error('Invalid Event ID format')
+    }
+
+    const event = await Event.findById(eventId)
+    if (!event) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOwner = event.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error('Not authorized to moderate reviews for this event')
+    }
+
+    const reviews = await Review.find({ event: eventId })
+        .populate('user', 'userName email')
+        .sort({ createdAt: -1 })
+
+    res.status(200).json({
+        success: true,
+        count: reviews.length,
+        data: reviews,
+    })
+})
+
+// ============================================================================
+// @desc    Moderate a Review (Approve, Reject, On Hold)
+// @route   PUT /api/events/:eventId/reviews/:reviewId/moderate
+// @access  Private (Admin / Organizer)
+// ============================================================================
+export const moderateReview = asyncHandler(async (req, res) => {
+    const { eventId, reviewId } = req.params
+    const { status, moderationRemarks } = req.body
+
+    const allowedStatuses = ['approved', 'rejected', 'on_hold']
+    if (!allowedStatuses.includes(status)) {
+        res.status(400)
+        throw new Error(
+            "Invalid status. Must be 'approved', 'rejected', or 'on_hold'",
+        )
+    }
+
+    const event = await Event.findById(eventId)
+    if (!event) {
+        res.status(404)
+        throw new Error('Event not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOwner = event.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error('Not authorized to moderate reviews for this event')
+    }
+
+    const review = await Review.findOne({ _id: reviewId, event: eventId })
+    if (!review) {
+        res.status(404)
+        throw new Error('Review not found')
+    }
+
+    review.status = status
+    review.moderatedBy = req.user._id
+    if (moderationRemarks) {
+        review.moderationRemarks = moderationRemarks.trim()
+    }
+
+    // review.save() automatically triggers calcAverageRatings to refresh event score
+    await review.save()
+
+    res.status(200).json({
+        success: true,
+        message: `Review marked as ${status}`,
+        data: review,
+    })
+})
+
+// ============================================================================
 // @desc    Delete a Review (Author or Admin)
 // @route   DELETE /api/events/:eventId/reviews/:reviewId
 // @access  Private
@@ -120,25 +252,17 @@ export const getEventReviews = asyncHandler(async (req, res) => {
 export const deleteReview = asyncHandler(async (req, res) => {
     const { eventId, reviewId } = req.params
 
-    if (
-        !mongoose.Types.ObjectId.isValid(eventId) ||
-        !mongoose.Types.ObjectId.isValid(reviewId)
-    ) {
-        res.status(400)
-        throw new Error('Invalid Event ID or Review ID format')
-    }
-
-    const review = await Review.findOne({
-        _id: reviewId,
-        event: eventId,
-    })
-
+    const review = await Review.findOne({ _id: reviewId, event: eventId })
     if (!review) {
         res.status(404)
         throw new Error('Review not found')
     }
 
-    const userRoleName = req.user?.role?.role?.toLowerCase()
+    const userRoleName = (
+        req.user?.role?.role ||
+        req.user?.role ||
+        ''
+    ).toLowerCase()
     const isOwner = review.user.toString() === req.user._id.toString()
     const isAdmin = userRoleName === 'admin'
 
@@ -147,7 +271,6 @@ export const deleteReview = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to delete this review')
     }
 
-    // deleteOne triggers the post-deleteOne hook to recalculate ratings
     await review.deleteOne()
 
     res.status(200).json({
@@ -164,7 +287,10 @@ export const deleteReview = asyncHandler(async (req, res) => {
 export const getLatestReviews = asyncHandler(async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 6, 12)
 
-    const reviews = await Review.find({ isVerifiedAttendee: true })
+    const reviews = await Review.find({
+        isVerifiedAttendee: true,
+        status: 'approved',
+    })
         .populate('user', 'userName')
         .populate('event', 'title')
         .sort({ createdAt: -1 })

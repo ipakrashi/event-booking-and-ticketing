@@ -10,6 +10,9 @@ import {
     createEventReview,
     getEventReviews,
     deleteReview,
+    getMyReviewStatus,
+    getEventReviewsForModeration,
+    moderateReview,
 } from '../controller/reviewController.js'
 import { protect, restrictTo } from '../middleware/appMiddleware.js'
 
@@ -25,7 +28,24 @@ router.get(
     getEventSettlementSummary,
 )
 
-// Review Routes
+// Review Status for Logged-In User
+router.get('/:eventId/reviews/my-status', protect, getMyReviewStatus)
+
+// Review Moderation (Admin / Organizer)
+router.get(
+    '/:eventId/reviews/admin',
+    protect,
+    restrictTo('admin', 'organizer'),
+    getEventReviewsForModeration,
+)
+router.put(
+    '/:eventId/reviews/:reviewId/moderate',
+    protect,
+    restrictTo('admin', 'organizer'),
+    moderateReview,
+)
+
+// Standard Public & Attendee Review Routes
 router
     .route('/:eventId/reviews')
     .get(getEventReviews)
