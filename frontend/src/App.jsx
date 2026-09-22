@@ -16,6 +16,7 @@ import ResetPasswordScreen from './pages/ResetPasswordScreen'
 import AdminBookingsScreen from './pages/admin/AdminBookingsScreen'
 import AdminRolesScreen from './pages/admin/AdminRolesScreen'
 import AdminCategoriesScreen from './pages/admin/AdminCategoriesScreen'
+import AdminVenuesScreen from './pages/admin/AdminVenuesScreen'
 
 const App = () => {
     return (
@@ -50,6 +51,10 @@ const App = () => {
                     <Route
                         path='/admin/categories'
                         element={<AdminCategoriesScreen />}
+                    />
+                    <Route
+                        path='/admin/venues'
+                        element={<AdminVenuesScreen />}
                     />
                 </Routes>
             </main>

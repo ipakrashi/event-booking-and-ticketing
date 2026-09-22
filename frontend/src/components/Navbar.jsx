@@ -464,7 +464,6 @@ const Navbar = () => {
                                 {isStaffOrAdmin && (
                                     <>
                                         <div className='divider my-1 border-base-content/10'></div>
-
                                         <li className='menu-title text-[11px] text-primary font-bold px-3 py-1 uppercase tracking-wider flex items-center justify-between'>
                                             <span>Staff Operations</span>
                                             <span className='badge badge-primary badge-xs uppercase font-mono'>
@@ -487,6 +486,15 @@ const Navbar = () => {
                                             >
                                                 <Tag className='w-4 h-4 text-primary' />{' '}
                                                 Category Management
+                                            </Link>
+                                        </li>
+                                        <li>
+                                            <Link
+                                                to='/admin/venues'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <Building2 className='w-4 h-4 text-primary' />{' '}
+                                                Venues & Halls
                                             </Link>
                                         </li>
                                         <li>
@@ -601,6 +609,15 @@ const Navbar = () => {
                                     >
                                         <Tag className='w-4 h-4 text-primary' />{' '}
                                         Category Management
+                                    </Link>
+                                </li>
+                                <li>
+                                    <Link
+                                        to='/admin/venues'
+                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                    >
+                                        <Building2 className='w-4 h-4 text-primary' />{' '}
+                                        Venues & Halls
                                     </Link>
                                 </li>
                                 <span className='text-[10px] font-black uppercase tracking-wider text-primary block'>
