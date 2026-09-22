@@ -26,6 +26,10 @@ import {
     generateEventPayout,
     recordPayoutDisbursement,
 } from '../controller/payoutController.js'
+import {
+    getAllSubscribers,
+    toggleSubscriberStatus,
+} from '../controller/newsletterController.js'
 
 const router = express.Router()
 
@@ -87,4 +91,13 @@ router.delete('/events/:id', protect, admin, deleteEvent)
 router.post('/event/:eventId/generate', protect, admin, generateEventPayout)
 
 router.post('/:payoutId/disburse', protect, admin, recordPayoutDisbursement)
+
+router.get('/newsletter/subscribers', protect, admin, getAllSubscribers)
+router.put(
+    '/newsletter/subscribers/:id',
+    protect,
+    admin,
+    toggleSubscriberStatus,
+)
+
 export default router

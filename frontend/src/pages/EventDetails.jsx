@@ -365,7 +365,7 @@ const EventDetails = () => {
                                                 >
                                                     <Minus className='w-3.5 h-3.5' />
                                                 </button>
-                                                <span className='text-sm font-bold text-white px-2 min-w-[24px] text-center font-mono'>
+                                                <span className='text-sm font-bold text-white px-2 min-w-6 text-center font-mono'>
                                                     {qty}
                                                 </span>
                                                 <button
@@ -610,7 +610,7 @@ const EventDetails = () => {
 
                         {reviewSuccess && (
                             <div className='p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2'>
-                                <ShieldCheck className='w-4 h-4 flex-shrink-0' />
+                                <ShieldCheck className='w-4 h-4 shrink-0' />
                                 <span>
                                     Your review has been submitted and
                                     aggregated!
@@ -620,7 +620,7 @@ const EventDetails = () => {
 
                         {reviewError && (
                             <div className='p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2'>
-                                <AlertCircle className='w-4 h-4 flex-shrink-0 mt-0.5' />
+                                <AlertCircle className='w-4 h-4 shrink-0 mt-0.5' />
                                 <span>{reviewError}</span>
                             </div>
                         )}

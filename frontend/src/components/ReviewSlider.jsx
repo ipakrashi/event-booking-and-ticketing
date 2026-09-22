@@ -109,9 +109,9 @@ const ReviewSlider = ({ reviews = [] }) => {
                     {reviews.map((rev) => (
                         <div
                             key={rev._id}
-                            className='flex-shrink-0 px-3 w-full sm:w-1/2 lg:w-1/3'
+                            className='shrink-0 px-3 w-full sm:w-1/2 lg:w-1/3'
                         >
-                            <div className='bg-base-100 border border-base-content/10 rounded-2xl p-6 shadow-md hover:border-indigo-500/40 hover:shadow-xl transition-all flex flex-col justify-between h-full min-h-[220px]'>
+                            <div className='bg-base-100 border border-base-content/10 rounded-2xl p-6 shadow-md hover:border-indigo-500/40 hover:shadow-xl transition-all flex flex-col justify-between h-full min-h-55'>
                                 <div className='space-y-3'>
                                     <div className='flex items-center justify-between gap-2'>
                                         <div className='flex items-center gap-1 text-amber-400'>

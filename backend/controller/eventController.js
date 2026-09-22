@@ -179,55 +179,115 @@ export const createEvent = asyncHandler(async (req, res) => {
 // @route   GET /api/events
 // @access  Public
 // ============================================================================
+// export const getAllEvents = asyncHandler(async (req, res) => {
+//     const { categoryId, status, isFeatured, isTopEvent, search } = req.query
+
+//     // 1. Default barrier: exclude internal organizer drafts from public queries
+//     const filter = {
+//         status: { $ne: 'draft' },
+//     }
+
+//     // 2. Allow clients to filter by specific public lifecycle status
+//     if (status && status !== 'draft') {
+//         filter.status = status
+//     }
+
+//     // 3. Category filtering
+//     if (categoryId && mongoose.Types.ObjectId.isValid(categoryId)) {
+//         filter.categoryId = categoryId
+//     }
+
+//     // 4. Section 2: Top Events Filter (?isTopEvent=true)
+//     if (isTopEvent !== undefined) {
+//         filter.isTopEvent = isTopEvent === 'true' || isTopEvent === true
+//     }
+
+//     // 5. Section 3: Featured Spotlight Filter (?isFeatured=true)
+//     if (isFeatured !== undefined) {
+//         filter.isFeatured = isFeatured === 'true' || isFeatured === true
+//     }
+
+//     // 6. Optional text search over title and description
+//     if (search && search.trim()) {
+//         filter.$or = [
+//             { title: { $regex: search.trim(), $options: 'i' } },
+//             { description: { $regex: search.trim(), $options: 'i' } },
+//         ]
+//     }
+
+//     const allEvents = await Event.find(filter)
+//         .populate('categoryId', 'eventCategory')
+//         .populate('venueId', 'name address city')
+//         .populate('organizerId', 'userName email')
+//         .sort({ startDate: 1 })
+
+//     res.status(200).json({
+//         success: true,
+//         count: allEvents.length,
+//         data: allEvents,
+//     })
+// })
+// backend/controller/eventController.js (inside getAllEvents)
+
 export const getAllEvents = asyncHandler(async (req, res) => {
-    const { categoryId, status, isFeatured, isTopEvent, search } = req.query
+    const {
+        keyword,
+        category,
+        city,
+        venueId,
+        auditoriumId,
+        sort,
+        isTopEvent,
+        isFeatured,
+    } = req.query
 
-    // 1. Default barrier: exclude internal organizer drafts from public queries
-    const filter = {
-        status: { $ne: 'draft' },
+    const query = { status: 'published' }
+
+    if (keyword) {
+        query.title = { $regex: keyword, $options: 'i' }
     }
-
-    // 2. Allow clients to filter by specific public lifecycle status
-    if (status && status !== 'draft') {
-        filter.status = status
+    if (category) {
+        query.categoryId = category
     }
-
-    // 3. Category filtering
-    if (categoryId && mongoose.Types.ObjectId.isValid(categoryId)) {
-        filter.categoryId = categoryId
+    if (auditoriumId) {
+        query.auditoriumId = auditoriumId
     }
-
-    // 4. Section 2: Top Events Filter (?isTopEvent=true)
+    if (venueId) {
+        query.venueId = venueId
+    }
     if (isTopEvent !== undefined) {
-        filter.isTopEvent = isTopEvent === 'true' || isTopEvent === true
+        query.isTopEvent = isTopEvent === 'true'
     }
-
-    // 5. Section 3: Featured Spotlight Filter (?isFeatured=true)
     if (isFeatured !== undefined) {
-        filter.isFeatured = isFeatured === 'true' || isFeatured === true
+        query.isFeatured = isFeatured === 'true'
     }
 
-    // 6. Optional text search over title and description
-    if (search && search.trim()) {
-        filter.$or = [
-            { title: { $regex: search.trim(), $options: 'i' } },
-            { description: { $regex: search.trim(), $options: 'i' } },
-        ]
+    // Filter by city across populated Venue reference
+    if (city) {
+        const matchingVenues = await Venue.find({
+            city: { $regex: new RegExp(`^${city}$`, 'i') },
+        }).select('_id')
+        const venueIds = matchingVenues.map((v) => v._id)
+        query.venueId = { $in: venueIds }
     }
 
-    const allEvents = await Event.find(filter)
+    // Sorting rule
+    let sortOption = { startDate: 1 }
+    if (sort === 'highestRated' || sort === 'rating') {
+        sortOption = { averageRating: -1, totalReviews: -1 }
+    }
+
+    const events = await Event.find(query)
         .populate('categoryId', 'eventCategory')
-        .populate('venueId', 'name address city')
-        .populate('organizerId', 'userName email')
-        .sort({ startDate: 1 })
+        .populate('venueId', 'name address city pincode auditoriums')
+        .sort(sortOption)
 
     res.status(200).json({
         success: true,
-        count: allEvents.length,
-        data: allEvents,
+        count: events.length,
+        data: events,
     })
 })
-
 // ============================================================================
 // @desc    Get Public Event Details by ID (With Populated Hierarchy)
 // @route   GET /api/events/:id

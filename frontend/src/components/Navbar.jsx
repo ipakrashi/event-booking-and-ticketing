@@ -1,11 +1,17 @@
 // frontend/src/components/Navbar.jsx
 
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import {
+    Link,
+    useNavigate,
+    useLocation,
+    useSearchParams,
+} from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { logout } from '../redux/slices/authSlice'
 import { useLogoutApiMutation } from '../redux/api/usersApiSlice'
 import { useGetCategoriesQuery } from '../redux/api/categoriesApiSlice'
+import { useGetVenuesQuery } from '../redux/api/venuesApiSlice'
 import { useTheme } from '../context/ThemeContext'
 import logo from '../assets/logo.png'
 import {
@@ -16,26 +22,118 @@ import {
     ShieldCheck,
     Calendar,
     Sparkles,
-    Phone,
-    Info,
     Sun,
     Moon,
     Menu,
     X,
+    Search,
+    MapPin,
+    Building2,
+    Star,
 } from 'lucide-react'
 
 const Navbar = () => {
     const { userInfo } = useSelector((state) => state.auth)
     const { theme, toggleTheme } = useTheme()
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+    // Dropdown states
     const [isEventsOpen, setIsEventsOpen] = useState(false)
+    const [isCityOpen, setIsCityOpen] = useState(false)
+    const [isAudiOpen, setIsAudiOpen] = useState(false)
+
+    // Search input state
+    const [searchParams] = useSearchParams()
+    const [keyword, setKeyword] = useState(searchParams.get('keyword') || '')
+    const isFirstRender = useRef(true)
 
     const dispatch = useDispatch()
     const navigate = useNavigate()
+    const location = useLocation()
 
     const [logoutApiCall] = useLogoutApiMutation()
     const { data: categoryData } = useGetCategoriesQuery()
     const categories = categoryData?.data || []
+
+    const { data: venueData } = useGetVenuesQuery()
+    const venues = venueData?.data || []
+
+    const uniqueCities = Array.from(
+        new Set(
+            venues.map((v) => v.city?.trim()?.toLowerCase()).filter(Boolean),
+        ),
+    )
+
+    // =========================================================================
+    // 1. LIVE / DEBOUNCED SEARCH ON TYPING (400ms delay)
+    // =========================================================================
+    useEffect(() => {
+        // Avoid running on component initial mount
+        if (isFirstRender.current) {
+            isFirstRender.current = false
+            return
+        }
+
+        const timer = setTimeout(() => {
+            const trimmed = keyword.trim()
+            const currentParamKeyword = searchParams.get('keyword') || ''
+
+            // Only push route if text actually changed
+            if (trimmed !== currentParamKeyword) {
+                const nextParams = new URLSearchParams(searchParams)
+
+                if (trimmed) {
+                    nextParams.set('keyword', trimmed)
+                } else {
+                    nextParams.delete('keyword')
+                }
+
+                // Navigate to /events with updated parameters
+                navigate(`/events?${nextParams.toString()}`)
+            }
+        }, 400)
+
+        return () => clearTimeout(timer)
+    }, [keyword]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Keep input in sync if user navigates away or clears URL filters
+    useEffect(() => {
+        if (location.pathname !== '/events') {
+            setKeyword('')
+        }
+    }, [location.pathname])
+
+    // =========================================================================
+    // 2. EXPLICIT FORM SUBMISSION (Clears input immediately on submit)
+    // =========================================================================
+    const handleSearchSubmit = (e) => {
+        e.preventDefault()
+        const trimmed = keyword.trim()
+        const nextParams = new URLSearchParams(searchParams)
+
+        if (trimmed) {
+            nextParams.set('keyword', trimmed)
+            navigate(`/events?${nextParams.toString()}`)
+        } else {
+            nextParams.delete('keyword')
+            navigate('/events')
+        }
+
+        // Reset input after search submission
+        setKeyword('')
+        setMobileMenuOpen(false)
+    }
+
+    const handleClearSearch = () => {
+        setKeyword('')
+        const nextParams = new URLSearchParams(searchParams)
+        nextParams.delete('keyword')
+        navigate(
+            nextParams.toString()
+                ? `/events?${nextParams.toString()}`
+                : '/events',
+        )
+    }
 
     const handleLogout = async () => {
         try {
@@ -58,73 +156,74 @@ const Navbar = () => {
 
     return (
         <header className='sticky top-0 z-50 bg-base-100/95 backdrop-blur-md border-b border-base-content/10 shadow-sm transition-colors duration-200'>
-            <div className='max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between'>
-                {/* ================= MOBILE TOGGLE ================= */}
-                <div className='flex items-center gap-2 lg:hidden'>
-                    <button
-                        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                        className='btn btn-ghost btn-sm btn-square'
-                        aria-label='Toggle Navigation Menu'
-                    >
-                        {mobileMenuOpen ? (
-                            <X className='w-5 h-5' />
-                        ) : (
-                            <Menu className='w-5 h-5' />
-                        )}
-                    </button>
-                </div>
-
-                {/* ================= LEFT: DESKTOP NAVIGATION & MEGAMENU ================= */}
-                <nav className='hidden lg:flex items-center gap-2'>
-                    {/* Stable Megamenu Container with zero-gap hover bridge */}
-                    <div
-                        className='relative py-4'
-                        onMouseEnter={() => setIsEventsOpen(true)}
-                        onMouseLeave={() => setIsEventsOpen(false)}
-                    >
+            <div className='max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-4'>
+                {/* ================= LEFT: HAMBURGER & LOGO ================= */}
+                <div className='flex items-center gap-3'>
+                    <div className='flex items-center lg:hidden'>
                         <button
-                            onClick={() => setIsEventsOpen((prev) => !prev)}
-                            className='btn btn-ghost btn-sm font-semibold flex items-center gap-1.5 normal-case text-sm'
+                            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                            className='btn btn-ghost btn-sm btn-square'
+                            aria-label='Toggle Navigation Menu'
                         >
-                            <Calendar className='w-4 h-4 text-primary' />
-                            <span>Events</span>
-                            <ChevronDown
-                                className={`w-3.5 h-3.5 opacity-60 transition-transform duration-200 ${
-                                    isEventsOpen ? 'rotate-180' : ''
-                                }`}
-                            />
+                            {mobileMenuOpen ? (
+                                <X className='w-5 h-5' />
+                            ) : (
+                                <Menu className='w-5 h-5 text-base-content' />
+                            )}
                         </button>
+                    </div>
 
-                        {/* Megamenu Card with invisible hover bridge (before pseudo-area) */}
-                        {isEventsOpen && (
-                            <div
-                                className='absolute top-full left-0 pt-2 z-50 w-[420px]'
-                                onMouseEnter={() => setIsEventsOpen(true)}
-                                onMouseLeave={() => setIsEventsOpen(false)}
+                    <Link to='/' className='flex items-center group py-1'>
+                        <div className='px-2.5 py-1 rounded-xl transition-all duration-200 bg-white/95 shadow-sm group-hover:scale-105 border border-black/5'>
+                            <img
+                                src={logo}
+                                alt='EventPass'
+                                className='h-10 sm:h-11 w-auto object-contain block'
+                            />
+                        </div>
+                    </Link>
+
+                    <div className='hidden lg:block h-7 border-l border-base-content/20 mx-1'></div>
+
+                    {/* Desktop Nav Links */}
+                    <nav className='hidden lg:flex items-center gap-1'>
+                        {/* Categories Dropdown */}
+                        <div
+                            className='relative py-4'
+                            onMouseEnter={() => setIsEventsOpen(true)}
+                            onMouseLeave={() => setIsEventsOpen(false)}
+                        >
+                            <button
+                                onClick={() => setIsEventsOpen((prev) => !prev)}
+                                className='btn btn-ghost btn-sm font-semibold flex items-center gap-1 normal-case text-xs'
                             >
-                                <div className='p-5 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl animate-in fade-in slide-in-from-top-1 duration-150'>
-                                    <div className='flex items-center justify-between pb-3 border-b border-base-content/10 mb-3'>
-                                        <span className='text-xs font-bold uppercase tracking-wider text-base-content/70 flex items-center gap-1.5'>
-                                            <Sparkles className='w-3.5 h-3.5 text-primary' />{' '}
-                                            Event Categories
-                                        </span>
-                                        <Link
-                                            to='/events'
-                                            onClick={() =>
-                                                setIsEventsOpen(false)
-                                            }
-                                            className='text-xs text-primary font-semibold hover:underline'
-                                        >
-                                            Browse Catalog →
-                                        </Link>
-                                    </div>
+                                <Calendar className='w-3.5 h-3.5 text-primary' />
+                                <span>Categories</span>
+                                <ChevronDown
+                                    className={`w-3 h-3 opacity-60 transition-transform ${isEventsOpen ? 'rotate-180' : ''}`}
+                                />
+                            </button>
 
-                                    {categories.length === 0 ? (
-                                        <p className='text-xs text-base-content/60 py-2'>
-                                            No categories available
-                                        </p>
-                                    ) : (
-                                        <div className='grid grid-cols-2 gap-2'>
+                            {isEventsOpen && (
+                                <div className='absolute top-full left-0 pt-2 z-50 w-80'>
+                                    <div className='p-4 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl animate-in fade-in slide-in-from-top-1 duration-150'>
+                                        <div className='flex items-center justify-between pb-2 border-b border-base-content/10 mb-3'>
+                                            <span className='text-xs font-bold uppercase tracking-wider text-base-content/70 flex items-center gap-1.5'>
+                                                <Sparkles className='w-3.5 h-3.5 text-primary' />{' '}
+                                                Event Types
+                                            </span>
+                                            <Link
+                                                to='/events'
+                                                onClick={() =>
+                                                    setIsEventsOpen(false)
+                                                }
+                                                className='text-[11px] text-primary font-semibold hover:underline'
+                                            >
+                                                Browse All →
+                                            </Link>
+                                        </div>
+
+                                        <div className='grid grid-cols-2 gap-1.5'>
                                             {categories.map((cat) => (
                                                 <Link
                                                     key={cat._id}
@@ -132,51 +231,155 @@ const Navbar = () => {
                                                     onClick={() =>
                                                         setIsEventsOpen(false)
                                                     }
-                                                    className='px-3 py-2.5 rounded-xl bg-base-200/60 hover:bg-primary hover:text-primary-content text-xs font-medium text-base-content capitalize transition-all flex items-center justify-between group'
+                                                    className='px-2.5 py-1.5 rounded-lg bg-base-200/60 hover:bg-primary hover:text-primary-content text-xs font-medium text-base-content capitalize transition-all truncate'
                                                 >
-                                                    <span className='font-semibold'>
-                                                        {cat.eventCategory}
-                                                    </span>
-                                                    <span className='text-[10px] opacity-60 group-hover:opacity-100'>
-                                                        Explore
-                                                    </span>
+                                                    {cat.eventCategory}
                                                 </Link>
                                             ))}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <Link
-                        to='/about'
-                        className='btn btn-ghost btn-sm font-semibold normal-case'
-                    >
-                        <Info className='w-4 h-4 opacity-70' />
-                        <span>About</span>
-                    </Link>
-
-                    <Link
-                        to='/contact'
-                        className='btn btn-ghost btn-sm font-semibold normal-case'
-                    >
-                        <Phone className='w-4 h-4 opacity-70' />
-                        <span>Contact</span>
-                    </Link>
-                </nav>
-
-                {/* ================= CENTER: ADAPTIVE LOGO ================= */}
-                <div className='flex items-center justify-center'>
-                    <Link to='/' className='flex items-center group py-1'>
-                        <div className='px-3 py-1.5 rounded-2xl transition-all duration-200 bg-white/95 shadow-sm hover:shadow group-hover:scale-105'>
-                            <img
-                                src={logo}
-                                alt='EventPass'
-                                className='h-12 w-auto object-contain block'
-                            />
+                            )}
                         </div>
-                    </Link>
+
+                        {/* By City Dropdown */}
+                        <div
+                            className='relative py-4'
+                            onMouseEnter={() => setIsCityOpen(true)}
+                            onMouseLeave={() => setIsCityOpen(false)}
+                        >
+                            <button
+                                onClick={() => setIsCityOpen((prev) => !prev)}
+                                className='btn btn-ghost btn-sm font-semibold flex items-center gap-1 normal-case text-xs'
+                            >
+                                <MapPin className='w-3.5 h-3.5 text-primary' />
+                                <span>By City</span>
+                                <ChevronDown
+                                    className={`w-3 h-3 opacity-60 transition-transform ${isCityOpen ? 'rotate-180' : ''}`}
+                                />
+                            </button>
+
+                            {isCityOpen && (
+                                <div className='absolute top-full left-0 pt-2 z-50 w-52'>
+                                    <div className='p-3 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl space-y-1'>
+                                        <span className='text-[11px] font-bold uppercase tracking-wider text-base-content/60 px-2 block mb-1'>
+                                            Select City
+                                        </span>
+                                        {uniqueCities.length === 0 ? (
+                                            <p className='text-xs text-base-content/50 px-2 py-1'>
+                                                No venues loaded
+                                            </p>
+                                        ) : (
+                                            uniqueCities.map((city) => (
+                                                <Link
+                                                    key={city}
+                                                    to={`/events?city=${encodeURIComponent(city)}`}
+                                                    onClick={() =>
+                                                        setIsCityOpen(false)
+                                                    }
+                                                    className='block px-3 py-1.5 rounded-lg hover:bg-primary hover:text-primary-content text-xs font-medium capitalize transition-colors'
+                                                >
+                                                    {city}
+                                                </Link>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Auditoriums Dropdown */}
+                        <div
+                            className='relative py-4'
+                            onMouseEnter={() => setIsAudiOpen(true)}
+                            onMouseLeave={() => setIsAudiOpen(false)}
+                        >
+                            <button
+                                onClick={() => setIsAudiOpen((prev) => !prev)}
+                                className='btn btn-ghost btn-sm font-semibold flex items-center gap-1 normal-case text-xs'
+                            >
+                                <Building2 className='w-3.5 h-3.5 text-primary' />
+                                <span>Auditoriums</span>
+                                <ChevronDown
+                                    className={`w-3 h-3 opacity-60 transition-transform ${isAudiOpen ? 'rotate-180' : ''}`}
+                                />
+                            </button>
+
+                            {isAudiOpen && (
+                                <div className='absolute top-full left-0 pt-2 z-50 w-72'>
+                                    <div className='p-3 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl max-h-80 overflow-y-auto space-y-2'>
+                                        <span className='text-[11px] font-bold uppercase tracking-wider text-base-content/60 px-2 block'>
+                                            Venues & Halls
+                                        </span>
+                                        {venues.map((v) => (
+                                            <div
+                                                key={v._id}
+                                                className='space-y-1'
+                                            >
+                                                <span className='text-[11px] font-bold text-primary px-2 block truncate'>
+                                                    {v.name}
+                                                </span>
+                                                {v.auditoriums?.map((audi) => (
+                                                    <Link
+                                                        key={audi._id}
+                                                        to={`/events?auditoriumId=${audi._id}`}
+                                                        onClick={() =>
+                                                            setIsAudiOpen(false)
+                                                        }
+                                                        className='block px-3 py-1 rounded-md text-xs text-base-content/80 hover:bg-base-200 transition-colors truncate'
+                                                    >
+                                                        ↳ {audi.name}
+                                                    </Link>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Highest Rated */}
+                        <Link
+                            to='/events?sort=highestRated'
+                            className='btn btn-ghost btn-sm font-semibold normal-case text-xs flex items-center gap-1.5'
+                        >
+                            <Star className='w-3.5 h-3.5 text-amber-400 fill-amber-400' />
+                            <span>Highest Rated</span>
+                        </Link>
+                    </nav>
+                </div>
+
+                {/* ================= CENTER: DEBOUNCED SEARCH BAR ================= */}
+                <div className='hidden md:flex flex-1 max-w-sm mx-2'>
+                    <form
+                        onSubmit={handleSearchSubmit}
+                        className='relative w-full flex items-center'
+                    >
+                        <input
+                            type='text'
+                            value={keyword}
+                            onChange={(e) => setKeyword(e.target.value)}
+                            placeholder='Type to search events, venues...'
+                            className='w-full pl-3.5 pr-14 py-1.5 text-xs rounded-xl bg-base-200/80 border border-base-content/15 text-base-content placeholder-base-content/50 focus:outline-none focus:border-primary focus:bg-base-100 transition-all'
+                        />
+                        {keyword && (
+                            <button
+                                type='button'
+                                onClick={handleClearSearch}
+                                className='absolute right-9 text-base-content/40 hover:text-base-content p-1'
+                                title='Clear'
+                            >
+                                <X className='w-3 h-3' />
+                            </button>
+                        )}
+                        <button
+                            type='submit'
+                            className='absolute right-1 top-1/2 -translate-y-1/2 btn btn-xs btn-primary rounded-lg px-2 font-bold'
+                            title='Search Site'
+                        >
+                            <Search className='w-3 h-3' />
+                        </button>
+                    </form>
                 </div>
 
                 {/* ================= RIGHT: THEME TOGGLE & AUTH ================= */}
@@ -202,8 +405,8 @@ const Navbar = () => {
                                 <div className='w-7 h-7 rounded-full bg-primary text-primary-content flex items-center justify-center font-bold text-xs shadow-sm'>
                                     {userInfo.userName?.charAt(0).toUpperCase()}
                                 </div>
-                                <div className='text-left hidden md:block'>
-                                    <p className='text-xs font-bold leading-tight truncate max-w-[100px]'>
+                                <div className='text-left hidden lg:block'>
+                                    <p className='text-xs font-bold leading-tight truncate max-w-28 text-base-content'>
                                         {userInfo.userName}
                                     </p>
                                     <span className='text-[10px] text-primary uppercase font-mono font-bold'>
@@ -254,6 +457,15 @@ const Navbar = () => {
                                                 Event Management
                                             </Link>
                                         </li>
+                                        <li>
+                                            <Link
+                                                to='/admin/banners/create'
+                                                className='flex items-center gap-2 text-sm rounded-lg'
+                                            >
+                                                <Sparkles className='w-4 h-4 text-primary' />{' '}
+                                                Create Hero Banner
+                                            </Link>
+                                        </li>
                                     </>
                                 )}
 
@@ -279,13 +491,46 @@ const Navbar = () => {
                 </div>
             </div>
 
-            {/* ================= MOBILE MENU ================= */}
+            {/* ================= MOBILE MENU & MOBILE SEARCH ================= */}
             {mobileMenuOpen && (
-                <div className='lg:hidden bg-base-100 border-b border-base-content/10 px-4 py-5 space-y-4 shadow-xl'>
+                <div className='lg:hidden bg-base-100 border-b border-base-content/10 px-4 py-4 space-y-4 shadow-xl'>
+                    <form
+                        onSubmit={handleSearchSubmit}
+                        className='relative flex items-center'
+                    >
+                        <input
+                            type='text'
+                            value={keyword}
+                            onChange={(e) => setKeyword(e.target.value)}
+                            placeholder='Type to search events...'
+                            className='w-full pl-3 pr-14 py-2 text-xs rounded-xl bg-base-200 border border-base-content/15 text-base-content placeholder-base-content/50 focus:outline-none focus:border-primary'
+                        />
+                        {keyword && (
+                            <button
+                                type='button'
+                                onClick={handleClearSearch}
+                                className='absolute right-9 text-base-content/40 hover:text-base-content p-1'
+                            >
+                                <X className='w-3.5 h-3.5' />
+                            </button>
+                        )}
+                        <button
+                            type='submit'
+                            className='absolute right-1 btn btn-xs btn-primary rounded-lg px-2 font-bold'
+                        >
+                            <Search className='w-3.5 h-3.5' />
+                        </button>
+                    </form>
+
                     <div className='space-y-1'>
-                        <span className='text-xs font-bold uppercase tracking-wider text-base-content/50 block px-2 mb-1'>
-                            Navigation
-                        </span>
+                        <Link
+                            to='/events?sort=highestRated'
+                            onClick={() => setMobileMenuOpen(false)}
+                            className='flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-base-200 font-semibold text-sm text-amber-500'
+                        >
+                            <Star className='w-4 h-4 fill-amber-500' /> Highest
+                            Rated Events
+                        </Link>
                         <Link
                             to='/events'
                             onClick={() => setMobileMenuOpen(false)}
@@ -293,36 +538,22 @@ const Navbar = () => {
                         >
                             Browse All Events
                         </Link>
-                        <Link
-                            to='/about'
-                            onClick={() => setMobileMenuOpen(false)}
-                            className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm'
-                        >
-                            About EventPass
-                        </Link>
-                        <Link
-                            to='/contact'
-                            onClick={() => setMobileMenuOpen(false)}
-                            className='block px-3 py-2 rounded-xl hover:bg-base-200 font-medium text-sm'
-                        >
-                            Contact Support
-                        </Link>
                     </div>
 
-                    {categories.length > 0 && (
+                    {uniqueCities.length > 0 && (
                         <div className='space-y-1 pt-2 border-t border-base-content/10'>
                             <span className='text-xs font-bold uppercase tracking-wider text-base-content/50 block px-2 mb-1'>
-                                Explore Categories
+                                Cities
                             </span>
-                            <div className='grid grid-cols-2 gap-1.5'>
-                                {categories.map((cat) => (
+                            <div className='flex flex-wrap gap-1'>
+                                {uniqueCities.map((city) => (
                                     <Link
-                                        key={cat._id}
-                                        to={`/events?category=${cat._id}`}
+                                        key={city}
+                                        to={`/events?city=${encodeURIComponent(city)}`}
                                         onClick={() => setMobileMenuOpen(false)}
-                                        className='px-3 py-1.5 rounded-lg bg-base-200/50 text-xs capitalize truncate'
+                                        className='px-2.5 py-1 rounded-lg bg-base-200 text-xs capitalize'
                                     >
-                                        {cat.eventCategory}
+                                        {city}
                                     </Link>
                                 ))}
                             </div>

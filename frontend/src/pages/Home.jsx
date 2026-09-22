@@ -1,6 +1,5 @@
 // frontend/src/pages/Home.jsx
 
-import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 import {
@@ -10,17 +9,16 @@ import {
 import {
     Sparkles,
     TrendingUp,
-    Star,
-    ShieldCheck,
     MapPin,
     Calendar,
     ArrowRight,
     Ticket,
     Loader2,
-    MessageSquare,
 } from 'lucide-react'
 import ReviewSlider from '../components/ReviewSlider'
-import logo from '../assets/logo.png'
+import HeroSlider from '../components/HeroSlider'
+import { useGetHeroBannersQuery } from '../redux/api/bannersApiSlice.js'
+import NewsletterSection from '../components/NewsletterSection'
 
 const Home = () => {
     const { userInfo } = useSelector((state) => state.auth)
@@ -60,49 +58,16 @@ const Home = () => {
         }
     }
 
+    const { data: bannerData } = useGetHeroBannersQuery()
+    const banners = bannerData?.data || []
+
     return (
         <div className='space-y-16 pb-20'>
             {/* =========================================================
-          SECTION 1: HERO BANNER
-          ========================================================= */}
+    SECTION 1: HERO SLIDER (DYNAMIC BANNER CAROUSEL)
+    ========================================================= */}
             <section className='max-w-7xl mx-auto px-4 sm:px-6 pt-6'>
-                <div className='relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-black border border-white/10 shadow-2xl p-8 md:p-14'>
-                    <div className='absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none'></div>
-                    <div className='relative z-10 max-w-2xl space-y-5'>
-                        <div className='inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-bold tracking-wide'>
-                            <Sparkles className='w-3.5 h-3.5' /> Live Ticketing
-                            Platform
-                        </div>
-                        <h1 className='text-4xl md:text-6xl font-black tracking-tight text-white leading-tight'>
-                            Unforgettable Nights,{' '}
-                            <span className='text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-300'>
-                                Seamless Entry.
-                            </span>
-                        </h1>
-                        <p className='text-gray-300 text-base md:text-lg leading-relaxed'>
-                            Reserve authentic ticket tiers with zero scalper
-                            bots, physical courier dispatch options, and instant
-                            anti-passback QR gate passes.
-                        </p>
-                        <div className='flex flex-wrap items-center gap-4 pt-2'>
-                            <a
-                                href='#top-events'
-                                className='btn bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 rounded-xl border-0 shadow-lg shadow-indigo-600/30'
-                            >
-                                Explore Top Events{' '}
-                                <ArrowRight className='w-4 h-4' />
-                            </a>
-                            {featuredEvent && (
-                                <a
-                                    href='#featured'
-                                    className='btn btn-ghost bg-white/5 hover:bg-white/10 text-white font-bold px-6 rounded-xl border border-white/15'
-                                >
-                                    Featured Spotlight
-                                </a>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <HeroSlider banners={banners} />
             </section>
 
             {/* =========================================================
@@ -356,144 +321,12 @@ const Home = () => {
             </section>
 
             {/* =========================================================
-          SECTION 5: ROLE-BASED ADAPTIVE FOOTER
+          SECTION 5: NEWSLETTER SECTION
           ========================================================= */}
-            <footer className='border-t border-base-content/10 bg-base-100 pt-12 pb-8 mt-20'>
-                <div className='max-w-7xl mx-auto px-4 sm:px-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-8 mb-8 text-sm'>
-                    <div>
-                        <Link to='/' className='flex items-center group py-1'>
-                            <div className='px-3 py-1.5 rounded-2xl transition-all duration-200 bg-white/95 shadow-sm hover:shadow group-hover:scale-105'>
-                                <img
-                                    src={logo}
-                                    alt='EventPass'
-                                    className='h-12 w-auto object-contain block'
-                                />
-                            </div>
-                        </Link>
-                        <p className='text-base-content/70 text-xs leading-relaxed'>
-                            Modern multi-vendor ticketing infrastructure with
-                            cryptographic gate check-ins and verified dispatch.
-                        </p>
-                    </div>
 
-                    <div>
-                        <span className='font-bold text-base-content block mb-3'>
-                            Discover
-                        </span>
-                        <ul className='space-y-2 text-xs text-base-content/70'>
-                            <li>
-                                <Link
-                                    to='/events'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Concerts & Shows
-                                </Link>
-                            </li>
-                            <li>
-                                <Link
-                                    to='/events'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Venues & Auditoriums
-                                </Link>
-                            </li>
-                            <li>
-                                <Link
-                                    to='/events'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Standup Comedy
-                                </Link>
-                            </li>
-                        </ul>
-                    </div>
-
-                    <div>
-                        <span className='font-bold text-base-content block mb-3'>
-                            Support & Policies
-                        </span>
-                        <ul className='space-y-2 text-xs text-base-content/70'>
-                            <li>
-                                <Link
-                                    to='/terms'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Cancellation & Refund Policy
-                                </Link>
-                            </li>
-                            <li>
-                                <Link
-                                    to='/dispatch'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Physical Courier Dispatch
-                                </Link>
-                            </li>
-                            <li>
-                                <Link
-                                    to='/contact'
-                                    className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                >
-                                    Help Center
-                                </Link>
-                            </li>
-                        </ul>
-                    </div>
-
-                    <div>
-                        <span className='font-bold text-base-content block mb-3'>
-                            {userInfo
-                                ? `Console (${userInfo.role || 'Member'})`
-                                : 'Join Platform'}
-                        </span>
-                        <ul className='space-y-2 text-xs text-base-content/70'>
-                            {userInfo ? (
-                                <>
-                                    <li>
-                                        <Link
-                                            to='/my-bookings'
-                                            className='text-indigo-600 dark:text-indigo-400 hover:underline'
-                                        >
-                                            My Active Tickets
-                                        </Link>
-                                    </li>
-                                    <li>
-                                        <Link
-                                            to='/profile'
-                                            className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                        >
-                                            Delivery Address Settings
-                                        </Link>
-                                    </li>
-                                </>
-                            ) : (
-                                <>
-                                    <li>
-                                        <Link
-                                            to='/login'
-                                            className='text-indigo-600 dark:text-indigo-400 hover:underline'
-                                        >
-                                            Login to Account
-                                        </Link>
-                                    </li>
-                                    <li>
-                                        <Link
-                                            to='/register'
-                                            className='hover:text-indigo-600 dark:hover:text-indigo-400'
-                                        >
-                                            Sign Up
-                                        </Link>
-                                    </li>
-                                </>
-                            )}
-                        </ul>
-                    </div>
-                </div>
-
-                <div className='max-w-7xl mx-auto px-4 sm:px-6 pt-6 border-t border-base-content/10 text-center text-xs text-base-content/60'>
-                    © 2026 EventPass Platform. All rights reserved.
-                </div>
-            </footer>
+            <div className='max-w-7xl mx-auto px-4 sm:px-6'>
+                <NewsletterSection />
+            </div>
         </div>
     )
 }

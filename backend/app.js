@@ -13,6 +13,9 @@ import eventRoutes from './route/eventRoute.js'
 import bookingRoutes from './route/bookingRoute.js'
 import payoutRoutes from './route/payoutRoute.js'
 import reviewRoute from './route/reviewRoute.js'
+import venueRoute from './route/venueRoute.js'
+import bannerRoute from './route/bannerRoute.js'
+import newsletterRoute from './route/newsletterRoute.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -34,6 +37,12 @@ app.use('/api/events', eventRoutes)
 app.use('/api/bookings', bookingRoutes)
 app.use('/api/payouts', payoutRoutes)
 app.use('/api/reviews', reviewRoute)
+// Mount public venue access:
+app.use('/api/venues', venueRoute)
+// Mount public banners endpoint:
+app.use('/api/banners', bannerRoute)
+// Mount newsletter routes:
+app.use('/api/newsletter', newsletterRoute)
 
 // Production Static Serving
 if (process.env.NODE_ENV === 'production') {
