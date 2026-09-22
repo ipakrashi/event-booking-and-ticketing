@@ -616,14 +616,14 @@ const Navbar = () => {
                                         <CalendarRange className='w-3.5 h-3.5 text-primary' />
                                         <span>Events</span>
                                     </Link>
-                                    <Link
+                                    {/* <Link
                                         to='/admin/events/create'
                                         onClick={() => setMobileMenuOpen(false)}
                                         className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
                                     >
                                         <CalendarPlus className='w-3.5 h-3.5 text-primary' />
                                         <span>Create Event</span>
-                                    </Link>
+                                    </Link> */}
                                     <Link
                                         to='/admin/roles'
                                         onClick={() => setMobileMenuOpen(false)}
