@@ -8,6 +8,7 @@ import Home from './pages/Home'
 import EventsCatalog from './pages/EventsCatalog'
 import EventDetails from './pages/EventDetails'
 import GatekeeperScanScreen from './pages/GatekeeperScanScreen'
+import MyBookingsScreen from './pages/MyBookingsScreen'
 
 const App = () => {
     return (
@@ -19,6 +20,7 @@ const App = () => {
                     <Route path='/events' element={<EventsCatalog />} />
                     <Route path='/events/:id' element={<EventDetails />} />
                     <Route path='/login' element={<Login />} />
+                    <Route path='/my-bookings' element={<MyBookingsScreen />} />
                     <Route
                         path='/gatekeeper'
                         element={<GatekeeperScanScreen />}
