@@ -2,20 +2,17 @@ import asyncHandler from 'express-async-handler'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import mongoose from 'mongoose'
+import crypto from 'crypto'
 import User from '../model/user.js'
 import Role from '../model/role.js'
+import sendEmail from '../util/sendEmail.js'
 
 // ==========================================
 // @desc    Register / Add a new user
 // @route   POST /api/users
 // @access  Public (Self-registration) / Private (Admin)
 // ==========================================
-// ==========================================
-// @desc    Register / Add a new user
-// @route   POST /api/users
-// @access  Public (Self-registration) / Private (Admin)
-// ==========================================
-const addUser = asyncHandler(async (req, res) => {
+export const addUser = asyncHandler(async (req, res) => {
     let {
         userName,
         email,
@@ -30,13 +27,13 @@ const addUser = asyncHandler(async (req, res) => {
         image,
     } = req.body || {}
 
-    // 1. Validate required fields
+    // 1. Basic field validation
     if (!userName || !email || !password) {
         res.status(400)
         throw new Error('User name, email, and password are required')
     }
 
-    // 2. Default Role Fallback if not supplied by frontend
+    // 2. Default Role Fallback if not supplied by caller
     if (!role) {
         let defaultRole = await Role.findOne({
             role: { $in: ['user', 'attendee', 'customer'] },
@@ -61,7 +58,7 @@ const addUser = asyncHandler(async (req, res) => {
     const salt = await bcrypt.genSalt(10)
     const hashedPassword = await bcrypt.hash(password, salt)
 
-    // 5. Persist with optional chaining (?.) on every single optional string
+    // 5. Persist with safe string handling
     const user = await User.create({
         userName: userName?.trim(),
         email: email?.toLowerCase()?.trim(),
@@ -89,7 +86,7 @@ const addUser = asyncHandler(async (req, res) => {
 // @route   GET /api/users
 // @access  Private/Admin
 // ==========================================
-const getUsers = asyncHandler(async (req, res) => {
+export const getUsers = asyncHandler(async (req, res) => {
     const users = await User.find({})
         .populate('role', 'role')
         .sort({ createdAt: -1 })
@@ -106,7 +103,7 @@ const getUsers = asyncHandler(async (req, res) => {
 // @route   POST /api/users/login
 // @access  Public
 // ==========================================
-const loginUser = asyncHandler(async (req, res) => {
+export const loginUser = asyncHandler(async (req, res) => {
     const { email, password } = req.body
 
     if (!email || !password) {
@@ -126,7 +123,6 @@ const loginUser = asyncHandler(async (req, res) => {
             )
         }
 
-        // --- STRICT CONCURRENCY BLOCKER ---
         const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes
         if (
             user.lastLogin &&
@@ -138,12 +134,10 @@ const loginUser = asyncHandler(async (req, res) => {
             )
         }
 
-        // Increment version to revoke prior active tokens & update heartbeat
         user.tokenVersion = (user.tokenVersion || 0) + 1
         user.lastLogin = new Date()
         await user.save()
 
-        // Generate JWT payload
         const roleName = user.role?.role || 'user'
         const token = jwt.sign(
             {
@@ -155,12 +149,11 @@ const loginUser = asyncHandler(async (req, res) => {
             { expiresIn: '1d' },
         )
 
-        // Set hardened HTTP-Only Cookie
         res.cookie('jwt', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
-            maxAge: 1 * 24 * 60 * 60 * 1000, // 1 day
+            maxAge: 1 * 24 * 60 * 60 * 1000,
         })
 
         res.status(200).json({
@@ -186,7 +179,7 @@ const loginUser = asyncHandler(async (req, res) => {
 // @route   POST /api/users/logout
 // @access  Public / Authenticated
 // ==========================================
-const logoutUser = asyncHandler(async (req, res) => {
+export const logoutUser = asyncHandler(async (req, res) => {
     const token = req.cookies?.jwt
 
     if (token) {
@@ -199,7 +192,7 @@ const logoutUser = asyncHandler(async (req, res) => {
                 $inc: { tokenVersion: 1 },
             })
         } catch {
-            // Expired or malformed token
+            // Token expired or invalid
         }
     }
 
@@ -221,7 +214,7 @@ const logoutUser = asyncHandler(async (req, res) => {
 // @route   PUT /api/users/:id
 // @access  Private (Self or Admin)
 // ==========================================
-const editUser = asyncHandler(async (req, res) => {
+export const editUser = asyncHandler(async (req, res) => {
     const { id } = req.params
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -242,18 +235,14 @@ const editUser = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to edit this profile')
     }
 
-    // Explicitly load password hash for identity verification
     const user = await User.findById(id).select('+password')
     if (!user) {
         res.status(404)
         throw new Error('User not found')
     }
 
-    // -------------------------------------------------------------------------
-    // 1. HARDENED PASSWORD CHANGE VERIFICATION
-    // -------------------------------------------------------------------------
+    // Password Update Logic
     if (req.body.password) {
-        // If a regular user (or self) changes their password, require currentPassword
         if (!isAdmin || isSelf) {
             const { currentPassword } = req.body
 
@@ -283,9 +272,7 @@ const editUser = asyncHandler(async (req, res) => {
         user.tokenVersion = (user.tokenVersion || 0) + 1
     }
 
-    // -------------------------------------------------------------------------
-    // 2. EDITABLE CONTACT & PHYSICAL DISPATCH ATTRIBUTES
-    // -------------------------------------------------------------------------
+    // Profile & Dispatch Details
     if (req.body.userName !== undefined)
         user.userName = req.body.userName.trim()
     if (req.body.email !== undefined)
@@ -305,22 +292,24 @@ const editUser = asyncHandler(async (req, res) => {
     if (req.body.image !== undefined)
         user.image = req.body.image ? req.body.image.trim() : null
 
-    // Privileged fields: strictly Admin only
     if (isAdmin) {
         if (req.body.role !== undefined) user.role = req.body.role
         if (req.body.isActive !== undefined)
             user.isActive = Boolean(req.body.isActive)
     }
 
-    const updatedUser = await user.save()
+    await user.save()
 
-    // If password was changed for the active logged-in user, refresh their JWT cookie
+    // Populate role name to avoid returning raw ObjectId
+    const populatedUser = await User.findById(user._id).populate('role', 'role')
+    const roleString = populatedUser.role?.role || currentRoleName || 'user'
+
     if (req.body.password && isSelf) {
         const token = jwt.sign(
             {
-                userId: updatedUser._id,
-                role: currentRoleName,
-                tokenVersion: updatedUser.tokenVersion,
+                userId: populatedUser._id,
+                role: roleString,
+                tokenVersion: populatedUser.tokenVersion,
             },
             process.env.JWT_SECRET,
             { expiresIn: '1d' },
@@ -338,18 +327,18 @@ const editUser = asyncHandler(async (req, res) => {
         success: true,
         message: 'Profile updated successfully',
         data: {
-            _id: updatedUser._id,
-            userName: updatedUser.userName,
-            email: updatedUser.email,
-            role: updatedUser.role,
-            phone: updatedUser.phone,
-            address: updatedUser.address,
-            city: updatedUser.city,
-            state: updatedUser.state,
-            country: updatedUser.country,
-            pincode: updatedUser.pincode,
-            image: updatedUser.image,
-            isActive: updatedUser.isActive,
+            _id: populatedUser._id,
+            userName: populatedUser.userName,
+            email: populatedUser.email,
+            role: roleString,
+            phone: populatedUser.phone,
+            address: populatedUser.address,
+            city: populatedUser.city,
+            state: populatedUser.state,
+            country: populatedUser.country,
+            pincode: populatedUser.pincode,
+            image: populatedUser.image,
+            isActive: populatedUser.isActive,
         },
     })
 })
@@ -359,7 +348,7 @@ const editUser = asyncHandler(async (req, res) => {
 // @route   DELETE /api/users/:id
 // @access  Private/Admin
 // ==========================================
-const deleteUser = asyncHandler(async (req, res) => {
+export const deleteUser = asyncHandler(async (req, res) => {
     const { id } = req.params
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -381,10 +370,6 @@ const deleteUser = asyncHandler(async (req, res) => {
     })
 })
 
-// In backend/controller/userController.js
-import crypto from 'crypto'
-import sendEmail from '../util/sendEmail.js'
-
 // ==========================================
 // @desc    Initiate password reset (Send Email)
 // @route   POST /api/users/forgot-password
@@ -400,7 +385,6 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase().trim() })
 
-    // Security practice: Don't reveal if user does not exist
     if (!user) {
         return res.status(200).json({
             success: true,
@@ -409,10 +393,8 @@ export const forgotPassword = asyncHandler(async (req, res) => {
         })
     }
 
-    // 1. Generate random token
     const resetToken = crypto.randomBytes(24).toString('hex')
 
-    // 2. Hash token and save to database with 15-minute expiration
     user.resetPasswordToken = crypto
         .createHash('sha256')
         .update(resetToken)
@@ -422,11 +404,9 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 
     await user.save()
 
-    // 3. Create reset link
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
     const resetUrl = `${clientUrl}/reset-password/${resetToken}`
 
-    // 4. Clean HTML email layout
     const htmlMessage = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #0f172a; color: #f8fafc; border-radius: 16px;">
             <h2 style="color: #6366f1; margin-bottom: 16px;">EventPass Password Reset</h2>
@@ -464,12 +444,10 @@ export const forgotPassword = asyncHandler(async (req, res) => {
                 'If an account exists with that email, a password reset link has been dispatched.',
         })
     } catch (err) {
-        // Clear token if dispatch fails
         user.resetPasswordToken = null
         user.resetPasswordExpire = null
         await user.save()
 
-        console.error('Email dispatch failure:', err)
         res.status(500)
         throw new Error('Email service unavailable. Please try again later.')
     }
@@ -489,10 +467,8 @@ export const resetPassword = asyncHandler(async (req, res) => {
         throw new Error('Password must be at least 6 characters long')
     }
 
-    // 1. Hash the incoming token to match database SHA-256 hash
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
 
-    // 2. Find user with valid and unexpired token
     const user = await User.findOne({
         resetPasswordToken: hashedToken,
         resetPasswordExpire: { $gt: Date.now() },
@@ -503,11 +479,9 @@ export const resetPassword = asyncHandler(async (req, res) => {
         throw new Error('Invalid or expired password reset token')
     }
 
-    // 3. Set new hashed password
     const salt = await bcrypt.genSalt(10)
     user.password = await bcrypt.hash(password, salt)
 
-    // 4. Invalidate prior reset tokens and increment token version
     user.resetPasswordToken = null
     user.resetPasswordExpire = null
     user.tokenVersion = (user.tokenVersion || 0) + 1
@@ -520,5 +494,3 @@ export const resetPassword = asyncHandler(async (req, res) => {
             'Password reset successful! You can now log in with your new credentials.',
     })
 })
-
-export { addUser, getUsers, loginUser, logoutUser, editUser, deleteUser }
