@@ -30,6 +30,7 @@ import {
     getAllSubscribers,
     toggleSubscriberStatus,
 } from '../controller/newsletterController.js'
+import { createBanner } from '../controller/bannerController.js'
 
 const router = express.Router()
 
@@ -99,5 +100,7 @@ router.put(
     admin,
     toggleSubscriberStatus,
 )
+// Banner Admin Route:
+router.post('/banners', protect, admin, upload.single('image'), createBanner)
 
 export default router
