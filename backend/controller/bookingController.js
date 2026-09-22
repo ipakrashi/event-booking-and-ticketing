@@ -367,7 +367,10 @@ export const requestBookingRefund = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { cancellationReason } = req.body
 
-    const booking = await Booking.findById(id)
+    const booking = await Booking.findById(id).populate(
+        'event',
+        'title startDate endDate status',
+    )
     if (!booking) {
         res.status(404)
         throw new Error('Booking not found')
@@ -382,6 +385,21 @@ export const requestBookingRefund = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to cancel this booking')
     }
 
+    // 1. Ineligible Booking Statuses
+    const nonCancellableStatuses = [
+        'cancelled',
+        'refund_issued',
+        'refund_requested',
+        'rejected',
+    ]
+    if (nonCancellableStatuses.includes(booking.bookingStatus)) {
+        res.status(400)
+        throw new Error(
+            `Booking is already in '${booking.bookingStatus}' state and cannot be cancelled.`,
+        )
+    }
+
+    // 2. Physical Dispatch Barrier
     if (
         booking.despatchStatus === 'dispatched' ||
         booking.despatchStatus === 'received'
@@ -392,26 +410,39 @@ export const requestBookingRefund = asyncHandler(async (req, res) => {
         )
     }
 
-    if (
-        ['cancelled', 'refund_issued', 'refund_requested'].includes(
-            booking.bookingStatus,
+    // 3. Event Status Restrictions (Completed / Cancelled events cannot be cancelled)
+    if (['completed', 'cancelled'].includes(booking.event?.status)) {
+        res.status(400)
+        throw new Error(
+            `Cannot cancel reservations for an event that is already marked as ${booking.event?.status}.`,
         )
+    }
+
+    // 4. Time Cutoff: No cancellation beyond the event start date/time
+    if (
+        booking.event?.startDate &&
+        new Date() >= new Date(booking.event.startDate)
     ) {
         res.status(400)
         throw new Error(
-            `Booking is already in '${booking.bookingStatus}' state`,
+            'The cancellation window has closed. Bookings cannot be cancelled once the event has started.',
         )
     }
 
     booking.cancellationReason = cancellationReason || 'Requested by customer'
     booking.refundAmount = booking.totalAmount
 
+    // Differentiate: Paid vs Unpaid
     if (booking.paymentStatus === 'paid') {
         booking.bookingStatus = 'refund_requested'
         booking.paymentStatus = 'refund_requested'
     } else {
+        // Unpaid: Immediately restore tier seat inventory and mark cancelled
         await Event.updateOne(
-            { _id: booking.event, 'ticketTiers._id': booking.ticketTierId },
+            {
+                _id: booking.event._id || booking.event,
+                'ticketTiers._id': booking.ticketTierId,
+            },
             { $inc: { 'ticketTiers.$.soldQuantity': -booking.bookedQty } },
         )
         booking.bookingStatus = 'cancelled'
@@ -424,8 +455,8 @@ export const requestBookingRefund = asyncHandler(async (req, res) => {
         success: true,
         message:
             booking.paymentStatus === 'refund_requested'
-                ? 'Refund request submitted. Awaiting Admin/Organizer approval.'
-                : 'Unpaid booking cancelled and seat released.',
+                ? 'Refund request submitted. Awaiting Admin/Organizer review.'
+                : 'Reservation cancelled and locked seats released successfully.',
         data: updated,
     })
 })

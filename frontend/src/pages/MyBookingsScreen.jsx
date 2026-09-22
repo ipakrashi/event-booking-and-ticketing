@@ -22,6 +22,7 @@ import {
     Lock,
     Loader2,
     CreditCard,
+    Ban,
 } from 'lucide-react'
 
 // QR Pass Modal Component
@@ -112,7 +113,7 @@ const MyBookingsScreen = () => {
 
     // Modal UI states
     const [selectedBookingForQr, setSelectedBookingForQr] = useState(null)
-    const [refundModalBooking, setRefundModalBooking] = useState(null)
+    const [cancelModalBooking, setCancelModalBooking] = useState(null)
     const [cancellationReason, setCancellationReason] = useState('')
 
     // Payment proof modal states
@@ -120,18 +121,20 @@ const MyBookingsScreen = () => {
     const [payMode, setPayMode] = useState('upi')
     const [payTrxnId, setPayTrxnId] = useState('')
 
-    const handleRefundSubmit = async (e) => {
+    const handleCancelSubmit = async (e) => {
         e.preventDefault()
-        if (!cancellationReason.trim()) return alert('Please enter a reason')
+        if (!cancellationReason.trim())
+            return alert('Please enter a cancellation reason')
+
         try {
             await requestRefund({
-                id: refundModalBooking._id,
+                id: cancelModalBooking._id,
                 cancellationReason: cancellationReason.trim(),
             }).unwrap()
-            setRefundModalBooking(null)
+            setCancelModalBooking(null)
             setCancellationReason('')
         } catch (err) {
-            alert(err?.data?.message || 'Failed to submit refund request')
+            alert(err?.data?.message || 'Failed to process cancellation')
         }
     }
 
@@ -207,18 +210,46 @@ const MyBookingsScreen = () => {
             ) : (
                 <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                     {bookings.map((b) => {
-                        // Strict rule: Entry Pass unlocks only when paid, confirmed, and dispatched or received
+                        const now = new Date()
+                        const eventStart = b.event?.startDate
+                            ? new Date(b.event.startDate)
+                            : null
+                        const isEventStartedOrPast = eventStart
+                            ? now >= eventStart
+                            : false
+                        const isEventStatusLocked = [
+                            'completed',
+                            'cancelled',
+                        ].includes(b.event?.status)
+                        const isTerminalBooking = [
+                            'cancelled',
+                            'refund_requested',
+                            'refund_issued',
+                            'rejected',
+                        ].includes(b.bookingStatus)
+
+                        // Digital Entry Pass: accessible when paid, confirmed, and dispatched or received
                         const isPassAccessible =
                             b.paymentStatus === 'paid' &&
                             b.bookingStatus === 'confirmed' &&
                             (b.despatchStatus === 'dispatched' ||
                                 b.despatchStatus === 'received')
 
-                        // Eligible for refund if paid, confirmed, but not yet dispatched
+                        // Paid Refund Eligibility: Paid, confirmed, not dispatched, event not started/locked, not in terminal state
                         const canRequestRefund =
                             b.paymentStatus === 'paid' &&
                             b.bookingStatus === 'confirmed' &&
-                            b.despatchStatus === 'not_dispatched'
+                            b.despatchStatus === 'not_dispatched' &&
+                            !isEventStartedOrPast &&
+                            !isEventStatusLocked &&
+                            !isTerminalBooking
+
+                        // Unpaid Cancellation Eligibility: Reservation can be released immediately if event hasn't started
+                        const canCancelUnpaid =
+                            b.paymentStatus === 'not_paid' &&
+                            !isTerminalBooking &&
+                            !isEventStartedOrPast &&
+                            !isEventStatusLocked
 
                         return (
                             <div
@@ -231,15 +262,39 @@ const MyBookingsScreen = () => {
                                             {b.event?.title || 'Event Booking'}
                                         </h3>
                                         <div className='text-xs text-base-content/60 flex items-center gap-1 mt-0.5'>
-                                            <MapPin className='w-3.5 h-3.5 text-primary' />
+                                            <MapPin className='w-3.5 h-3.5 text-primary shrink-0' />
                                             <span>
                                                 {b.event?.venueId?.name} (
                                                 {b.event?.venueId?.city})
                                             </span>
                                         </div>
+                                        {eventStart && (
+                                            <div className='text-[11px] text-base-content/50 flex items-center gap-1 mt-0.5 font-mono'>
+                                                <Calendar className='w-3 h-3' />
+                                                <span>
+                                                    {eventStart.toLocaleDateString(
+                                                        'en-IN',
+                                                        {
+                                                            day: 'numeric',
+                                                            month: 'short',
+                                                            year: 'numeric',
+                                                        },
+                                                    )}{' '}
+                                                    •{' '}
+                                                    {eventStart.toLocaleTimeString(
+                                                        'en-IN',
+                                                        {
+                                                            hour: '2-digit',
+                                                            minute: '2-digit',
+                                                        },
+                                                    )}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                     <span className='font-mono font-black text-primary text-sm'>
-                                        ₹{b.totalAmount}
+                                        ₹
+                                        {b.totalAmount?.toLocaleString('en-IN')}
                                     </span>
                                 </div>
 
@@ -265,7 +320,7 @@ const MyBookingsScreen = () => {
                                             Payment
                                         </span>
                                         <span
-                                            className={`badge badge-xs font-bold ${
+                                            className={`badge badge-xs font-bold uppercase text-[9px] ${
                                                 b.paymentStatus === 'paid'
                                                     ? 'badge-success'
                                                     : b.paymentStatus ===
@@ -273,11 +328,11 @@ const MyBookingsScreen = () => {
                                                       ? 'badge-info'
                                                       : b.paymentStatus ===
                                                           'not_paid'
-                                                        ? 'badge-warning'
+                                                        ? 'badge-warning text-warning-content'
                                                         : 'badge-error'
                                             }`}
                                         >
-                                            {b.paymentStatus}
+                                            {b.paymentStatus?.replace('_', ' ')}
                                         </span>
                                     </div>
                                 </div>
@@ -287,14 +342,17 @@ const MyBookingsScreen = () => {
                                     <div className='flex items-center justify-between text-[11px] opacity-70'>
                                         <span>Booking State:</span>
                                         <span className='font-bold uppercase tracking-wider'>
-                                            {b.bookingStatus}
+                                            {b.bookingStatus?.replace('_', ' ')}
                                         </span>
                                     </div>
                                     <div className='flex items-center justify-between text-[11px] opacity-70'>
                                         <span>Dispatch State:</span>
                                         <span className='font-bold capitalize flex items-center gap-1'>
                                             <Truck className='w-3 h-3' />{' '}
-                                            {b.despatchStatus}
+                                            {b.despatchStatus?.replace(
+                                                '_',
+                                                ' ',
+                                            )}
                                         </span>
                                     </div>
                                 </div>
@@ -302,17 +360,18 @@ const MyBookingsScreen = () => {
                                 {/* Action Buttons */}
                                 <div className='pt-2 border-t border-base-content/10 flex flex-wrap items-center justify-between gap-2'>
                                     {/* Unpaid Booking: Enter Offline Payment Proof */}
-                                    {b.paymentStatus === 'not_paid' && (
-                                        <button
-                                            onClick={() =>
-                                                setPaymentModalBooking(b)
-                                            }
-                                            className='btn btn-sm btn-primary rounded-xl font-bold gap-1.5 flex-1'
-                                        >
-                                            <CreditCard className='w-4 h-4' />{' '}
-                                            Submit Payment Proof
-                                        </button>
-                                    )}
+                                    {b.paymentStatus === 'not_paid' &&
+                                        !isTerminalBooking && (
+                                            <button
+                                                onClick={() =>
+                                                    setPaymentModalBooking(b)
+                                                }
+                                                className='btn btn-sm btn-primary rounded-xl font-bold gap-1.5 flex-1'
+                                            >
+                                                <CreditCard className='w-4 h-4' />{' '}
+                                                Submit Payment Proof
+                                            </button>
+                                        )}
 
                                     {/* Awaiting Admin Approval */}
                                     {b.paymentStatus ===
@@ -344,24 +403,50 @@ const MyBookingsScreen = () => {
                                             <div className='flex items-center gap-1.5 text-[11px] text-base-content/60 bg-base-200 px-3 py-2 rounded-xl flex-1'>
                                                 <Lock className='w-3.5 h-3.5 shrink-0' />
                                                 <span>
-                                                    Pass unlocks once physical
-                                                    tickets are dispatched
+                                                    Pass unlocks once tickets
+                                                    are dispatched
                                                 </span>
                                             </div>
                                         ))}
 
-                                    {/* Refund Action */}
+                                    {/* Cancellation Actions */}
                                     {canRequestRefund && (
                                         <button
                                             onClick={() =>
-                                                setRefundModalBooking(b)
+                                                setCancelModalBooking(b)
                                             }
                                             className='btn btn-sm btn-ghost text-error hover:bg-error/10 rounded-xl gap-1'
                                         >
                                             <RotateCcw className='w-3.5 h-3.5' />{' '}
-                                            Cancel
+                                            Request Refund
                                         </button>
                                     )}
+
+                                    {canCancelUnpaid && (
+                                        <button
+                                            onClick={() =>
+                                                setCancelModalBooking(b)
+                                            }
+                                            className='btn btn-sm btn-ghost text-error/80 hover:bg-error/10 rounded-xl gap-1 text-xs'
+                                        >
+                                            <Ban className='w-3.5 h-3.5' />{' '}
+                                            Cancel Reservation
+                                        </button>
+                                    )}
+
+                                    {/* Window Closed Indicator */}
+                                    {(isEventStartedOrPast ||
+                                        isEventStatusLocked) &&
+                                        !isTerminalBooking && (
+                                            <div className='text-[10px] text-base-content/50 bg-base-200/60 px-2.5 py-1.5 rounded-lg italic'>
+                                                Cancellation window closed
+                                                (Event{' '}
+                                                {isEventStatusLocked
+                                                    ? b.event?.status
+                                                    : 'started'}
+                                                )
+                                            </div>
+                                        )}
                                 </div>
                             </div>
                         )
@@ -392,7 +477,10 @@ const MyBookingsScreen = () => {
                             <br />
                             Total Amount:{' '}
                             <span className='font-bold text-primary font-mono'>
-                                ₹{paymentModalBooking.totalAmount}
+                                ₹
+                                {paymentModalBooking.totalAmount?.toLocaleString(
+                                    'en-IN',
+                                )}
                             </span>
                         </p>
 
@@ -465,23 +553,23 @@ const MyBookingsScreen = () => {
                 </div>
             )}
 
-            {/* Request Refund Modal */}
-            {refundModalBooking && (
+            {/* Dynamic Cancellation / Refund Modal */}
+            {cancelModalBooking && (
                 <div className='modal modal-open bg-black/60 z-50'>
                     <div className='modal-box rounded-3xl max-w-sm p-6 space-y-4'>
                         <h3 className='font-bold text-base text-base-content'>
-                            Request Cancellation & Refund
+                            {cancelModalBooking.paymentStatus === 'paid'
+                                ? 'Request Cancellation & Refund'
+                                : 'Cancel Unpaid Reservation'}
                         </h3>
-                        <p className='text-xs opacity-70'>
-                            Booking:{' '}
-                            <span className='font-bold'>
-                                {refundModalBooking.event?.title}
-                            </span>{' '}
-                            (₹{refundModalBooking.totalAmount})
+                        <p className='text-xs opacity-70 leading-relaxed'>
+                            {cancelModalBooking.paymentStatus === 'paid'
+                                ? `Your refund request for ₹${cancelModalBooking.totalAmount?.toLocaleString('en-IN')} will be reviewed by the event organizer.`
+                                : `This will immediately release your ${cancelModalBooking.bookedQty} seat(s) back to the available inventory.`}
                         </p>
 
                         <form
-                            onSubmit={handleRefundSubmit}
+                            onSubmit={handleCancelSubmit}
                             className='space-y-3'
                         >
                             <textarea
@@ -490,13 +578,20 @@ const MyBookingsScreen = () => {
                                 onChange={(e) =>
                                     setCancellationReason(e.target.value)
                                 }
-                                placeholder='State your reason for cancellation...'
+                                placeholder={
+                                    cancelModalBooking.paymentStatus === 'paid'
+                                        ? 'State reason for refund request...'
+                                        : 'State reason for releasing reservation...'
+                                }
                                 className='textarea textarea-bordered w-full text-xs rounded-xl h-24'
                             />
                             <div className='modal-action pt-2'>
                                 <button
                                     type='button'
-                                    onClick={() => setRefundModalBooking(null)}
+                                    onClick={() => {
+                                        setCancelModalBooking(null)
+                                        setCancellationReason('')
+                                    }}
                                     className='btn btn-sm btn-ghost rounded-xl'
                                 >
                                     Dismiss
@@ -506,7 +601,17 @@ const MyBookingsScreen = () => {
                                     disabled={isRefunding}
                                     className='btn btn-sm btn-error text-white rounded-xl'
                                 >
-                                    Submit Request
+                                    {isRefunding ? (
+                                        <>
+                                            <Loader2 className='w-3.5 h-3.5 animate-spin' />
+                                            Processing...
+                                        </>
+                                    ) : cancelModalBooking.paymentStatus ===
+                                      'paid' ? (
+                                        'Submit Refund Request'
+                                    ) : (
+                                        'Confirm Cancellation'
+                                    )}
                                 </button>
                             </div>
                         </form>
