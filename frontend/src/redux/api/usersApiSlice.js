@@ -2,48 +2,50 @@
 
 import { apiSlice } from './apiSlice'
 
+const USERS_URL = '/api/users'
+
 export const usersApiSlice = apiSlice.injectEndpoints({
     endpoints: (builder) => ({
         login: builder.mutation({
-            query: (credentials) => ({
-                url: '/api/users/login',
+            query: (data) => ({
+                url: `${USERS_URL}/login`,
                 method: 'POST',
-                body: credentials,
+                body: data,
+            }),
+        }),
+        logout: builder.mutation({
+            query: () => ({
+                url: `${USERS_URL}/logout`,
+                method: 'POST',
             }),
         }),
         register: builder.mutation({
-            query: (userData) => ({
-                url: '/api/users',
+            query: (data) => ({
+                url: USERS_URL,
                 method: 'POST',
-                body: userData,
+                body: data,
             }),
         }),
-        logoutApi: builder.mutation({
-            query: () => ({
-                url: '/api/users/logout',
-                method: 'POST',
-            }),
-        }),
-        updateUser: builder.mutation({
-            query: ({ id, ...userData }) => ({
-                url: `/api/users/${id}`,
+        profile: builder.mutation({
+            query: ({ id, ...data }) => ({
+                url: `${USERS_URL}/${id}`,
                 method: 'PUT',
-                body: userData,
+                body: data,
             }),
             invalidatesTags: ['User'],
         }),
         forgotPassword: builder.mutation({
             query: (data) => ({
-                url: '/api/users/forgot-password',
+                url: `${USERS_URL}/forgot-password`,
                 method: 'POST',
-                body: data, // { email }
+                body: data,
             }),
         }),
         resetPassword: builder.mutation({
             query: ({ token, ...data }) => ({
-                url: `/api/users/reset-password/${token}`,
+                url: `${USERS_URL}/reset-password/${token}`,
                 method: 'PUT',
-                body: data, // { password }
+                body: data,
             }),
         }),
     }),
@@ -51,9 +53,9 @@ export const usersApiSlice = apiSlice.injectEndpoints({
 
 export const {
     useLoginMutation,
+    useLogoutMutation,
     useRegisterMutation,
-    useLogoutApiMutation,
-    useUpdateUserMutation,
+    useProfileMutation,
     useForgotPasswordMutation,
     useResetPasswordMutation,
 } = usersApiSlice
