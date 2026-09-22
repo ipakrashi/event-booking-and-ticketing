@@ -8,42 +8,34 @@ import Event from '../model/event.js'
 import Booking from '../model/booking.js'
 
 // ==================================
-//  @desc :     Create New Booking for an Event
+//  @desc :     Create New Booking(s) for an Event
 //  @route:     POST /api/bookings
 //  @access:    Private (Logged-in Users)
 // ==================================
 export const createBooking = asyncHandler(async (req, res) => {
-    const { eventId, ticketTierId, bookedQty } = req.body
+    const { eventId, selectedTiers, ticketTierId, bookedQty, paymentMode } =
+        req.body
     const userId = req.user._id
 
-    // 1. Validate incoming payload structure & formats
-    if (!eventId || !ticketTierId || !bookedQty) {
+    if (!eventId || (!selectedTiers && (!ticketTierId || !bookedQty))) {
         res.status(400)
-        throw new Error('Please provide eventId, ticketTierId, and bookedQty')
+        throw new Error(
+            'Please provide eventId and either selectedTiers array or ticketTierId with bookedQty',
+        )
     }
 
-    if (
-        !mongoose.Types.ObjectId.isValid(eventId) ||
-        !mongoose.Types.ObjectId.isValid(ticketTierId)
-    ) {
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
         res.status(400)
-        throw new Error('Invalid event or ticket tier ID format')
+        throw new Error('Invalid event ID format')
     }
 
-    const requestedQty = Number(bookedQty)
-    if (!Number.isInteger(requestedQty) || requestedQty <= 0) {
-        res.status(400)
-        throw new Error('Booked quantity must be a positive integer')
-    }
-
-    // 2. Fetch the target event
+    // 1. Fetch target event
     const event = await Event.findById(eventId)
     if (!event) {
         res.status(404)
         throw new Error('Event not found')
     }
 
-    // Guard: Support active sales and advance sales window
     const bookableStatuses = ['published', 'coming_soon']
     if (!bookableStatuses.includes(event.status)) {
         res.status(400)
@@ -52,78 +44,128 @@ export const createBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // 3. Locate the requested ticket tier subdocument
-    const tier = event.ticketTiers.id(ticketTierId)
-    if (!tier) {
-        res.status(404)
-        throw new Error('Selected ticket tier does not exist for this event')
-    }
-
-    // ----------------------------------------------------
-    // 4. ATOMIC INVENTORY RESERVATION (COMPARE-AND-SWAP)
-    // ----------------------------------------------------
-
-    // Step A: In-memory capacity check against fetched snapshot
-    const remainingSeats = tier.totalQuantity - tier.soldQuantity
-
-    if (requestedQty > remainingSeats) {
-        res.status(400)
-        throw new Error(
-            `Only ${remainingSeats} ticket(s) remaining for tier "${tier.name}"`,
-        )
-    }
-
-    // Step B: Atomic write with version lock on soldQuantity
-    const updatedEvent = await Event.findOneAndUpdate(
-        {
-            _id: eventId,
-            ticketTiers: {
-                $elemMatch: {
-                    _id: ticketTierId,
-                    soldQuantity: tier.soldQuantity, // Optimistic concurrency guard
-                },
+    // 2. Normalize items array
+    let itemsToBook = []
+    if (Array.isArray(selectedTiers) && selectedTiers.length > 0) {
+        itemsToBook = selectedTiers.map((item) => ({
+            tierId: item.tierId,
+            quantity: Number(item.quantity),
+        }))
+    } else {
+        itemsToBook = [
+            {
+                tierId: ticketTierId,
+                quantity: Number(bookedQty),
             },
-        },
-        {
-            $inc: { 'ticketTiers.$.soldQuantity': requestedQty },
-        },
-        {
-            returnDocument: 'after',
-            runValidators: true,
-        },
-    )
-
-    // Step C: Handle collision if another purchase completed concurrently
-    if (!updatedEvent) {
-        res.status(409)
-        throw new Error(
-            'Seat availability changed while processing your request. Please retry your booking.',
-        )
+        ]
     }
 
-    // ----------------------------------------------------
-    // 5. COMPUTE FINANCIALS & FREEZE SNAPSHOT IN BOOKING
-    // ----------------------------------------------------
-    const unitPrice = tier.price
-    const totalAmount = unitPrice * requestedQty
+    // Validate quantities
+    for (const item of itemsToBook) {
+        if (
+            !mongoose.Types.ObjectId.isValid(item.tierId) ||
+            !Number.isInteger(item.quantity) ||
+            item.quantity <= 0
+        ) {
+            res.status(400)
+            throw new Error('Invalid tier ID or quantity specified')
+        }
+    }
 
-    const booking = await Booking.create({
-        user: userId,
-        event: eventId,
-        ticketTierId: tier._id,
-        tierName: tier.name,
-        unitPrice: unitPrice,
-        bookedQty: requestedQty,
-        totalAmount: totalAmount,
-        bookingStatus: 'request_sent',
-        paymentStatus: 'not_paid',
-        despatchStatus: 'not_dispatched',
-    })
+    // 3. Atomically Reserve Inventory for All Selected Tiers
+    const createdBookings = []
+    const rollbacks = []
+
+    try {
+        for (const item of itemsToBook) {
+            const tier = event.ticketTiers.id(item.tierId)
+            if (!tier) {
+                throw new Error(
+                    `Ticket tier ID "${item.tierId}" does not exist`,
+                )
+            }
+
+            const remaining = tier.totalQuantity - tier.soldQuantity
+            if (item.quantity > remaining) {
+                throw new Error(
+                    `Only ${remaining} seat(s) remaining for tier "${tier.name}"`,
+                )
+            }
+
+            // Atomic decrement with optimistic concurrency
+            const updatedEvent = await Event.findOneAndUpdate(
+                {
+                    _id: eventId,
+                    ticketTiers: {
+                        $elemMatch: {
+                            _id: item.tierId,
+                            soldQuantity: tier.soldQuantity,
+                        },
+                    },
+                },
+                {
+                    $inc: { 'ticketTiers.$.soldQuantity': item.quantity },
+                },
+                {
+                    returnDocument: 'after',
+                    runValidators: true,
+                },
+            )
+
+            if (!updatedEvent) {
+                throw new Error(
+                    `Seat availability changed for tier "${tier.name}". Please retry your reservation.`,
+                )
+            }
+
+            rollbacks.push({ tierId: item.tierId, quantity: item.quantity })
+
+            // Financial computation
+            const unitPrice = tier.price
+            const totalAmount = unitPrice * item.quantity
+
+            // Auto-confirm with payment details and immediate anti-passback token
+            const entryPassToken = crypto.randomBytes(32).toString('hex')
+            const trxnId = `EP-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`
+
+            const booking = await Booking.create({
+                user: userId,
+                event: eventId,
+                ticketTierId: tier._id,
+                tierName: tier.name,
+                unitPrice: unitPrice,
+                bookedQty: item.quantity,
+                totalAmount: totalAmount,
+                bookingStatus: 'confirmed',
+                paymentStatus: 'paid',
+                paymentDetails: {
+                    mode: paymentMode || 'upi',
+                    trxnId: trxnId,
+                },
+                despatchStatus: 'not_dispatched',
+                entryPassToken: entryPassToken,
+            })
+
+            createdBookings.push(booking)
+        }
+    } catch (err) {
+        // Rollback any successfully decremented inventory if subsequent tiers fail
+        for (const rb of rollbacks) {
+            await Event.updateOne(
+                { _id: eventId, 'ticketTiers._id': rb.tierId },
+                { $inc: { 'ticketTiers.$.soldQuantity': -rb.quantity } },
+            )
+        }
+        res.status(400)
+        throw new Error(err.message)
+    }
 
     res.status(201).json({
         success: true,
-        message: 'Booking request created successfully',
-        data: booking,
+        message: 'Booking confirmed and Entry Passes issued successfully',
+        count: createdBookings.length,
+        data:
+            createdBookings.length === 1 ? createdBookings[0] : createdBookings,
     })
 })
 
@@ -134,7 +176,14 @@ export const createBooking = asyncHandler(async (req, res) => {
 // ==================================
 export const getMyBookings = asyncHandler(async (req, res) => {
     const bookings = await Booking.find({ user: req.user._id })
-        .populate('event', 'title startDate endDate venueId posterImage')
+        .populate('event', 'title startDate endDate venueId posterImage status')
+        .populate({
+            path: 'event',
+            populate: {
+                path: 'venueId',
+                select: 'name address city',
+            },
+        })
         .sort({ createdAt: -1 })
 
     res.status(200).json({
@@ -145,9 +194,9 @@ export const getMyBookings = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Get All Bookings for a Specific Event (Attendee Roster)
+//  @desc :     Get All Bookings for an Event (Attendee Roster)
 //  @route:     GET /api/bookings/event/:eventId
-//  @access:    Private/Admin/Organiser
+//  @access:    Private/Admin/Organizer
 // ==================================
 export const getEventBookings = asyncHandler(async (req, res) => {
     const { eventId } = req.params
@@ -163,10 +212,7 @@ export const getEventBookings = asyncHandler(async (req, res) => {
         throw new Error('Event not found')
     }
 
-    // Role extraction guard (handles populated role document or raw role string)
     const userRole = req.user.role?.role || req.user.role
-
-    // Authorization & Ownership Verification
     const isOwner =
         event.organizerId &&
         event.organizerId.toString() === req.user._id.toString()
@@ -186,7 +232,6 @@ export const getEventBookings = asyncHandler(async (req, res) => {
         )
         .sort({ createdAt: -1 })
 
-    // Summary metrics for the organizer dashboard
     const summary = bookings.reduce(
         (acc, b) => {
             acc.totalTicketsSold += b.bookedQty
@@ -207,7 +252,7 @@ export const getEventBookings = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Update Payment Status and details for a booking
+//  @desc :     Update Payment Status
 //  @route:     PUT /api/bookings/:id/pay
 //  @access:    Private
 // ==================================
@@ -215,13 +260,11 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { paymentAmount, paymentDetails } = req.body
 
-    // 1. Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
         res.status(400)
         throw new Error('Invalid booking ID format')
     }
 
-    // 2. Validate incoming payload structure
     if (!paymentAmount || !paymentDetails?.mode || !paymentDetails?.trxnId) {
         res.status(400)
         throw new Error(
@@ -229,14 +272,12 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 3. Find booking
     const bookingDetails = await Booking.findById(id)
     if (!bookingDetails) {
         res.status(404)
         throw new Error('Booking Details Not Found')
     }
 
-    // 4. Ownership verification
     const userRole = req.user.role?.role || req.user.role
     const isOwner = bookingDetails.user.toString() === req.user._id.toString()
     const isAdmin = userRole === 'admin'
@@ -248,7 +289,6 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 5. State guards
     if (bookingDetails.paymentStatus === 'paid') {
         res.status(400)
         throw new Error('There are no payments pending for this booking')
@@ -259,7 +299,6 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         throw new Error('Cannot submit payment for a cancelled booking')
     }
 
-    // 6. Tally amounts
     if (Number(paymentAmount) !== bookingDetails.totalAmount) {
         res.status(400)
         throw new Error(
@@ -267,7 +306,6 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 7. Update fields directly on the document
     bookingDetails.paymentStatus = 'paid'
     bookingDetails.bookingStatus = 'confirmed'
     bookingDetails.paymentDetails = {
@@ -275,12 +313,10 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         trxnId: paymentDetails.trxnId.trim(),
     }
 
-    // Assign cryptographically random entry pass token if not already assigned
     if (!bookingDetails.entryPassToken) {
         bookingDetails.entryPassToken = crypto.randomBytes(32).toString('hex')
     }
 
-    // 8. Persist to MongoDB
     const updatedBooking = await bookingDetails.save()
 
     res.status(200).json({
@@ -291,7 +327,7 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Update Dispatch Status, Generate Shipping Label & Manifest
+//  @desc :     Update Dispatch Status
 //  @route:     PUT /api/bookings/:id/dispatch
 //  @access:    Private (Admin / Organizer)
 // ==================================
@@ -299,13 +335,11 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { despatchDetails } = req.body
 
-    // 1. Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
         res.status(400)
         throw new Error('Invalid booking ID format')
     }
 
-    // 2. Validate payload structure
     const courierName = despatchDetails?.courierName?.trim()
     const podId = despatchDetails?.podId?.trim()
 
@@ -314,7 +348,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         throw new Error('Please provide courierName and podId')
     }
 
-    // 3. Find booking & populate organizer and recipient contact/dispatch information
     const booking = await Booking.findById(id)
         .populate('event', 'organizerId title')
         .populate(
@@ -327,7 +360,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    // 4. Ownership verification
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
     const isOwner =
@@ -340,7 +372,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 5. State guards
     if (booking.paymentStatus !== 'paid') {
         res.status(400)
         throw new Error('Cannot dispatch tickets for an unpaid booking')
@@ -361,7 +392,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 6. Recipient Physical Address Guard
     const recipient = booking.user
     if (
         !recipient ||
@@ -375,7 +405,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 7. Synthesize Verified Physical Shipping Label
     const shippingLabel = {
         bookingId: booking._id,
         eventTitle: booking.event?.title,
@@ -392,7 +421,6 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         dispatchedAt: new Date(),
     }
 
-    // 8. Mutate fields & commit
     booking.despatchStatus = 'dispatched'
     booking.despatchDetails = {
         courierName,
@@ -410,7 +438,7 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
 })
 
 // ==================================
-//  @desc :     Get Physical Shipping Label for a Booking
+//  @desc :     Get Physical Shipping Label
 //  @route:     GET /api/bookings/:id/shipping-label
 //  @access:    Private (Admin / Organizer)
 // ==================================
@@ -480,13 +508,11 @@ export const getShippingLabel = asyncHandler(async (req, res) => {
 export const updateReceiveStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
 
-    // 1. Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
         res.status(400)
         throw new Error('Invalid booking ID format')
     }
 
-    // 2. Find booking & populate event organizer
     const bookingDetails = await Booking.findById(id).populate(
         'event',
         'organizerId',
@@ -497,7 +523,6 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    // 3. Ownership verification
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
     const isOwner =
@@ -513,7 +538,6 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 4. State guards
     if (bookingDetails.despatchStatus !== 'dispatched') {
         res.status(400)
         throw new Error(
@@ -528,10 +552,7 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 5. Mutate fields
     bookingDetails.despatchStatus = 'received'
-
-    // 6. Persist to MongoDB
     const updatedBooking = await bookingDetails.save()
 
     res.status(200).json({
@@ -549,13 +570,11 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
 export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
     const { bookingIds } = req.body
 
-    // 1. Validate incoming array structure
     if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
         res.status(400)
         throw new Error('Please provide an array of bookingIds')
     }
 
-    // 2. Validate format of each ObjectId in the array
     const isValidFormat = bookingIds.every((id) =>
         mongoose.Types.ObjectId.isValid(id),
     )
@@ -566,7 +585,6 @@ export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    // 3. Resolve role and determine ownership scope
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
 
@@ -576,22 +594,17 @@ export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
         bookingStatus: { $ne: 'cancelled' },
     }
 
-    // If organizer, restrict update strictly to events they own
     if (!isAdmin) {
         const organizerEvents = await Event.find({
             organizerId: req.user._id,
         }).select('_id')
 
         const ownedEventIds = organizerEvents.map((evt) => evt._id)
-
         filter.event = { $in: ownedEventIds }
     }
 
-    // 4. Execute atomic bulk update
     const result = await Booking.updateMany(filter, {
-        $set: {
-            despatchStatus: 'received',
-        },
+        $set: { despatchStatus: 'received' },
     })
 
     res.status(200).json({
@@ -611,20 +624,17 @@ export const cancelBooking = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { cancelledQty, cancellationReason } = req.body
 
-    // 1. Validate ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
         res.status(400)
         throw new Error('Invalid booking ID format')
     }
 
-    // 2. Validate payload structure
     const parsedQty = Number(cancelledQty)
     if (!parsedQty || !Number.isInteger(parsedQty) || parsedQty <= 0) {
         res.status(400)
         throw new Error('Valid cancel quantity is required')
     }
 
-    // 3. Find booking & populate event organizer
     const bookingDetails = await Booking.findById(id).populate(
         'event',
         'organizerId',
@@ -635,7 +645,6 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    // 4. Ownership verification
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
     const isOwner =
@@ -651,7 +660,6 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // 5. State guards
     if (
         bookingDetails.despatchStatus === 'dispatched' ||
         bookingDetails.despatchStatus === 'received'
@@ -675,7 +683,6 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // Full cancellation policy guard
     if (parsedQty !== bookingDetails.bookedQty) {
         res.status(400)
         throw new Error(
@@ -683,7 +690,7 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // 6. ATOMIC INVENTORY ROLLBACK
+    // Atomic Inventory Rollback
     const eventId = bookingDetails.event._id || bookingDetails.event
     const updatedEvent = await Event.findOneAndUpdate(
         {
@@ -706,7 +713,6 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // 7. Update booking audit and state fields
     bookingDetails.cancelledQty = parsedQty
     bookingDetails.cancellationReason = cancellationReason || 'Not specified'
     bookingDetails.refundAmount = parsedQty * bookingDetails.unitPrice
@@ -717,7 +723,6 @@ export const cancelBooking = asyncHandler(async (req, res) => {
         bookingDetails.paymentStatus = 'refund_requested'
     }
 
-    // 8. Persist to MongoDB
     const updatedBooking = await bookingDetails.save()
 
     res.status(200).json({
@@ -759,7 +764,6 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
         throw new Error('Booking not found')
     }
 
-    // Ownership Verification
     const userRole = req.user.role?.role || req.user.role
     const isOwner = booking.user._id.toString() === req.user._id.toString()
     const isAdmin = userRole === 'admin'
@@ -769,7 +773,6 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to access this entry pass')
     }
 
-    // Guard: Must be paid and confirmed
     if (
         booking.paymentStatus !== 'paid' ||
         booking.bookingStatus !== 'confirmed'
@@ -781,13 +784,10 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
     }
 
     if (!booking.entryPassToken) {
-        res.status(500)
-        throw new Error(
-            'Entry pass token is missing for this confirmed booking',
-        )
+        booking.entryPassToken = crypto.randomBytes(32).toString('hex')
+        await booking.save()
     }
 
-    // Generate Base64 Data URI using High Error Correction Level ('H')
     const qrDataUrl = await QRCode.toDataURL(booking.entryPassToken, {
         errorCorrectionLevel: 'H',
         margin: 2,
@@ -818,11 +818,6 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
                 name: booking.user?.userName,
                 email: booking.user?.email,
                 phone: booking.user?.phone || null,
-                address: booking.user?.address || null,
-                city: booking.user?.city || null,
-                state: booking.user?.state || null,
-                pincode: booking.user?.pincode || null,
-                country: booking.user?.country || null,
                 tierName: booking.tierName,
                 bookedQty: booking.bookedQty,
             },
@@ -843,7 +838,6 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         throw new Error('Please provide a valid passToken string')
     }
 
-    // Find booking by the unique, indexed token
     const booking = await Booking.findOne({ entryPassToken: passToken.trim() })
         .populate('event', 'title startDate endDate organizerId status')
         .populate('user', 'userName email')
@@ -853,7 +847,6 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         throw new Error('Invalid or non-existent entry pass. Admission Denied.')
     }
 
-    // Authorization: Verifier must be admin, or the organizer/assigned staff of this event
     const userRole = req.user.role?.role || req.user.role
     const isAdmin = userRole === 'admin'
     const isOrganizer =
@@ -866,7 +859,6 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         )
     }
 
-    // State Barrier: Active Payment & Booking Status
     if (
         booking.bookingStatus === 'cancelled' ||
         booking.paymentStatus !== 'paid'
@@ -877,7 +869,6 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         )
     }
 
-    // Anti-Passback Guard: Prevent ticket reuse
     if (booking.isCheckedIn) {
         res.status(400)
         throw new Error(
@@ -887,7 +878,6 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         )
     }
 
-    // Atomic Admission Commit
     booking.isCheckedIn = true
     booking.checkInTimestamp = new Date()
     booking.checkedInBy = req.user._id
