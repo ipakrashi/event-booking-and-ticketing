@@ -32,6 +32,7 @@ import {
     Star,
     ScanLine,
     CreditCard,
+    Shield,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -462,11 +463,21 @@ const Navbar = () => {
                                 {isStaffOrAdmin && (
                                     <>
                                         <div className='divider my-1 border-base-content/10'></div>
+
                                         <li className='menu-title text-[11px] text-primary font-bold px-3 py-1 uppercase tracking-wider flex items-center justify-between'>
                                             <span>Staff Operations</span>
                                             <span className='badge badge-primary badge-xs uppercase font-mono'>
                                                 {roleName}
                                             </span>
+                                        </li>
+                                        <li>
+                                            <Link
+                                                to='/admin/roles'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <Shield className='w-4 h-4 text-primary' />{' '}
+                                                Role Management
+                                            </Link>
                                         </li>
                                         <li>
                                             <Link
