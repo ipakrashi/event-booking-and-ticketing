@@ -239,9 +239,14 @@ export const getAllEvents = asyncHandler(async (req, res) => {
         sort,
         isTopEvent,
         isFeatured,
+        status, // <-- Accept status from query
     } = req.query
 
-    const query = { status: 'published' }
+    // If status is passed (e.g. 'all', 'published', 'coming_soon', etc.)
+    const query = {}
+    if (status && status !== 'all') {
+        query.status = status
+    }
 
     if (keyword) {
         query.title = { $regex: keyword, $options: 'i' }
@@ -275,6 +280,8 @@ export const getAllEvents = asyncHandler(async (req, res) => {
     let sortOption = { startDate: 1 }
     if (sort === 'highestRated' || sort === 'rating') {
         sortOption = { averageRating: -1, totalReviews: -1 }
+    } else if (sort === 'schedule_desc') {
+        sortOption = { startDate: -1 }
     }
 
     const events = await Event.find(query)

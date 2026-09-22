@@ -17,6 +17,9 @@ import AdminBookingsScreen from './pages/admin/AdminBookingsScreen'
 import AdminRolesScreen from './pages/admin/AdminRolesScreen'
 import AdminCategoriesScreen from './pages/admin/AdminCategoriesScreen'
 import AdminVenuesScreen from './pages/admin/AdminVenuesScreen'
+import AdminCreateEventScreen from './pages/admin/AdminCreateEventScreen'
+import AdminEventsScreen from './pages/admin/AdminEventsScreen'
+import AdminEditEventScreen from './pages/admin/AdminEditEventScreen'
 
 const App = () => {
     return (
@@ -55,6 +58,18 @@ const App = () => {
                     <Route
                         path='/admin/venues'
                         element={<AdminVenuesScreen />}
+                    />
+                    <Route
+                        path='/admin/events/create'
+                        element={<AdminCreateEventScreen />}
+                    />
+                    <Route
+                        path='/admin/events'
+                        element={<AdminEventsScreen />}
+                    />
+                    <Route
+                        path='/admin/events/:id/edit'
+                        element={<AdminEditEventScreen />}
                     />
                 </Routes>
             </main>

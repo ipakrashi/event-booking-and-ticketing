@@ -19,7 +19,6 @@ import {
     LogOut,
     User,
     Ticket,
-    ShieldCheck,
     Calendar,
     Sparkles,
     Sun,
@@ -34,6 +33,8 @@ import {
     CreditCard,
     Shield,
     Tag,
+    CalendarPlus,
+    CalendarRange,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -499,6 +500,24 @@ const Navbar = () => {
                                         </li>
                                         <li>
                                             <Link
+                                                to='/admin/events'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <CalendarRange className='w-4 h-4 text-primary' />{' '}
+                                                Event Management
+                                            </Link>
+                                        </li>
+                                        {/* <li>
+                                            <Link
+                                                to='/admin/events/create'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <CalendarPlus className='w-4 h-4 text-primary' />{' '}
+                                                Create Event
+                                            </Link>
+                                        </li> */}
+                                        <li>
+                                            <Link
                                                 to='/admin/bookings'
                                                 className='flex items-center gap-2 text-sm rounded-lg font-medium'
                                             >
@@ -517,15 +536,6 @@ const Navbar = () => {
                                         </li>
                                         <li>
                                             <Link
-                                                to='/admin/events'
-                                                className='flex items-center gap-2 text-sm rounded-lg'
-                                            >
-                                                <ShieldCheck className='w-4 h-4 text-primary' />{' '}
-                                                Event Management
-                                            </Link>
-                                        </li>
-                                        <li>
-                                            <Link
                                                 to='/admin/banners/create'
                                                 className='flex items-center gap-2 text-sm rounded-lg'
                                             >
@@ -535,6 +545,7 @@ const Navbar = () => {
                                         </li>
                                     </>
                                 )}
+
                                 <div className='divider my-1 border-base-content/10'></div>
                                 <li>
                                     <button
@@ -590,51 +601,75 @@ const Navbar = () => {
                             </button>
                         </form>
 
-                        {/* High-Priority Staff Scanner for Mobile Camera */}
+                        {/* High-Priority Staff Tools for Mobile */}
                         {isStaffOrAdmin && (
                             <div className='p-2.5 rounded-xl bg-primary/10 border border-primary/20 space-y-2'>
-                                <li>
+                                <span className='text-[10px] font-black uppercase tracking-wider text-primary block'>
+                                    Staff Operations
+                                </span>
+                                <div className='grid grid-cols-2 gap-1.5'>
+                                    <Link
+                                        to='/admin/events'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
+                                    >
+                                        <CalendarRange className='w-3.5 h-3.5 text-primary' />
+                                        <span>Events</span>
+                                    </Link>
+                                    <Link
+                                        to='/admin/events/create'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
+                                    >
+                                        <CalendarPlus className='w-3.5 h-3.5 text-primary' />
+                                        <span>Create Event</span>
+                                    </Link>
                                     <Link
                                         to='/admin/roles'
-                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
                                     >
-                                        <Shield className='w-4 h-4 text-primary' />{' '}
-                                        Role Management
+                                        <Shield className='w-3.5 h-3.5 text-primary' />
+                                        <span>Roles</span>
                                     </Link>
-                                </li>
-                                <li>
                                     <Link
                                         to='/admin/categories'
-                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
                                     >
-                                        <Tag className='w-4 h-4 text-primary' />{' '}
-                                        Category Management
+                                        <Tag className='w-3.5 h-3.5 text-primary' />
+                                        <span>Categories</span>
                                     </Link>
-                                </li>
-                                <li>
                                     <Link
                                         to='/admin/venues'
-                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
                                     >
-                                        <Building2 className='w-4 h-4 text-primary' />{' '}
-                                        Venues & Halls
+                                        <Building2 className='w-3.5 h-3.5 text-primary' />
+                                        <span>Venues</span>
                                     </Link>
-                                </li>
-                                <span className='text-[10px] font-black uppercase tracking-wider text-primary block'>
-                                    Staff Handheld Tool
-                                </span>
+                                    <Link
+                                        to='/admin/bookings'
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
+                                    >
+                                        <CreditCard className='w-3.5 h-3.5 text-primary' />
+                                        <span>Bookings</span>
+                                    </Link>
+                                </div>
+
                                 <Link
                                     to='/gatekeeper'
                                     onClick={() => setMobileMenuOpen(false)}
-                                    className='flex items-center gap-2.5 px-3 py-2 rounded-lg bg-primary text-primary-content font-bold text-xs shadow-md shadow-primary/30 transition-transform active:scale-95'
+                                    className='flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-content font-bold text-xs shadow-md shadow-primary/30 mt-1'
                                 >
                                     <ScanLine className='w-4 h-4' />
-                                    <span>Launch QR Camera Scanner</span>
+                                    <span>Launch QR Scanner</span>
                                 </Link>
                             </div>
                         )}
 
-                        {/* Attendee QR Passes for Quick Mobile Check-in */}
+                        {/* Attendee QR Passes */}
                         {userInfo && (
                             <div className='space-y-1 border-b border-base-content/10 pb-3'>
                                 <Link
