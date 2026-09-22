@@ -1,6 +1,6 @@
 // frontend/src/pages/GatekeeperScanScreen.jsx
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import {
     ShieldCheck,
@@ -12,9 +12,10 @@ import {
     User,
     Calendar,
     Ticket,
-    Sparkles,
     Volume2,
     VolumeX,
+    Keyboard,
+    Send,
 } from 'lucide-react'
 import { useVerifyGateEntryMutation } from '../redux/api/bookingsApiSlice'
 
@@ -23,51 +24,57 @@ const GatekeeperScanScreen = () => {
     const [isScanning, setIsScanning] = useState(false)
     const [scannerError, setScannerError] = useState('')
     const [soundEnabled, setSoundEnabled] = useState(true)
+    const [manualToken, setManualToken] = useState('')
+    const [showManualInput, setShowManualInput] = useState(false)
 
-    const scannerRef = useRef(null)
+    const qrCodeInstanceRef = useRef(null)
     const isProcessingRef = useRef(false)
+    const isMountedRef = useRef(true)
 
     const [verifyGateEntry, { isLoading: isVerifying }] =
         useVerifyGateEntryMutation()
 
-    // Web Audio Synthesizer Beeps for Handheld Scanner Feedback
-    const playAudioFeedback = (type) => {
-        if (!soundEnabled) return
-        try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)()
-            const osc = ctx.createOscillator()
-            const gain = ctx.createGain()
-            osc.connect(gain)
-            gain.connect(ctx.destination)
+    // Web Audio Synthesizer Beeps for Handheld Feedback
+    const playAudioFeedback = useCallback(
+        (type) => {
+            if (!soundEnabled) return
+            try {
+                const ctx = new (
+                    window.AudioContext || window.webkitAudioContext
+                )()
+                const osc = ctx.createOscillator()
+                const gain = ctx.createGain()
+                osc.connect(gain)
+                gain.connect(ctx.destination)
 
-            if (type === 'success') {
-                // High double chime
-                osc.type = 'sine'
-                osc.frequency.setValueAtTime(880, ctx.currentTime) // A5
-                osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.1) // D6
-                gain.gain.setValueAtTime(0.15, ctx.currentTime)
-                gain.gain.exponentialRampToValueAtTime(
-                    0.01,
-                    ctx.currentTime + 0.25,
-                )
-                osc.start(ctx.currentTime)
-                osc.stop(ctx.currentTime + 0.25)
-            } else {
-                // Low buzz error
-                osc.type = 'sawtooth'
-                osc.frequency.setValueAtTime(160, ctx.currentTime)
-                gain.gain.setValueAtTime(0.2, ctx.currentTime)
-                gain.gain.exponentialRampToValueAtTime(
-                    0.01,
-                    ctx.currentTime + 0.35,
-                )
-                osc.start(ctx.currentTime)
-                osc.stop(ctx.currentTime + 0.35)
+                if (type === 'success') {
+                    osc.type = 'sine'
+                    osc.frequency.setValueAtTime(880, ctx.currentTime) // A5
+                    osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.1) // D6
+                    gain.gain.setValueAtTime(0.15, ctx.currentTime)
+                    gain.gain.exponentialRampToValueAtTime(
+                        0.01,
+                        ctx.currentTime + 0.25,
+                    )
+                    osc.start(ctx.currentTime)
+                    osc.stop(ctx.currentTime + 0.25)
+                } else {
+                    osc.type = 'sawtooth'
+                    osc.frequency.setValueAtTime(160, ctx.currentTime)
+                    gain.gain.setValueAtTime(0.2, ctx.currentTime)
+                    gain.gain.exponentialRampToValueAtTime(
+                        0.01,
+                        ctx.currentTime + 0.35,
+                    )
+                    osc.start(ctx.currentTime)
+                    osc.stop(ctx.currentTime + 0.35)
+                }
+            } catch {
+                // Audio context suppressed by browser policy until interaction
             }
-        } catch {
-            // Audio context blocked until user interaction
-        }
-    }
+        },
+        [soundEnabled],
+    )
 
     const triggerHaptic = (status) => {
         if ('vibrate' in navigator) {
@@ -79,16 +86,17 @@ const GatekeeperScanScreen = () => {
         }
     }
 
-    // Handles scanned QR string (clean 64-char hex token or serialized JSON)
-    const handleQrCodeSuccess = async (decodedText) => {
+    // Core Verification Handler
+    const processPassToken = async (rawString) => {
+        if (!rawString || !rawString.trim()) return
         if (isProcessingRef.current) return
         isProcessingRef.current = true
 
-        let passToken = decodedText.trim()
+        let passToken = rawString.trim()
 
-        // Fallback: If attendee QR contains serialized JSON
+        // Fallback: If attendee QR contains serialized JSON object
         try {
-            const parsed = JSON.parse(decodedText)
+            const parsed = JSON.parse(passToken)
             if (parsed.passToken || parsed.entryPassToken) {
                 passToken = parsed.passToken || parsed.entryPassToken
             }
@@ -99,6 +107,8 @@ const GatekeeperScanScreen = () => {
         try {
             const res = await verifyGateEntry({ passToken }).unwrap()
 
+            if (!isMountedRef.current) return
+
             setScanResult({
                 status: 'success',
                 message: res.message || 'Entry Approved. Welcome to the event!',
@@ -106,7 +116,10 @@ const GatekeeperScanScreen = () => {
             })
             playAudioFeedback('success')
             triggerHaptic('success')
+            setManualToken('')
         } catch (err) {
+            if (!isMountedRef.current) return
+
             const errMsg =
                 err?.data?.message ||
                 err?.error ||
@@ -121,7 +134,7 @@ const GatekeeperScanScreen = () => {
             playAudioFeedback('error')
             triggerHaptic('error')
         } finally {
-            // 2.2-second debounce before opening camera lens to next attendee ticket
+            // 2.2-second debounce before opening lens to next attendee ticket
             setTimeout(() => {
                 isProcessingRef.current = false
             }, 2200)
@@ -130,51 +143,90 @@ const GatekeeperScanScreen = () => {
 
     const startScanner = async () => {
         setScannerError('')
+
+        // Ensure container element exists before calling Html5Qrcode
+        const element = document.getElementById('gatekeeper-reader')
+        if (!element) return
+
         try {
-            if (!scannerRef.current) {
-                scannerRef.current = new Html5Qrcode('gatekeeper-reader')
+            if (qrCodeInstanceRef.current) {
+                try {
+                    await qrCodeInstanceRef.current.stop()
+                } catch {
+                    // ignore if already stopped
+                }
             }
 
-            await scannerRef.current.start(
-                { facingMode: 'environment' }, // Back camera
+            const html5Qr = new Html5Qrcode('gatekeeper-reader')
+            qrCodeInstanceRef.current = html5Qr
+
+            await html5Qr.start(
+                { facingMode: 'environment' },
                 {
                     fps: 12,
                     qrbox: { width: 250, height: 250 },
                     aspectRatio: 1.0,
                 },
-                handleQrCodeSuccess,
+                (decodedText) => {
+                    processPassToken(decodedText)
+                },
                 () => {},
             )
-            setIsScanning(true)
+
+            if (isMountedRef.current) {
+                setIsScanning(true)
+            }
         } catch (err) {
-            console.error('QR Scanner init failure:', err)
-            setScannerError(
-                err?.message ||
-                    'Unable to access camera hardware. Ensure camera permission is allowed.',
-            )
-            setIsScanning(false)
+            console.error('Camera initialization failure:', err)
+            if (isMountedRef.current) {
+                setScannerError(
+                    err?.message ||
+                        'Unable to access camera hardware. Check browser camera permissions.',
+                )
+                setIsScanning(false)
+            }
         }
     }
 
     const stopScanner = async () => {
-        if (scannerRef.current && isScanning) {
+        if (qrCodeInstanceRef.current) {
             try {
-                await scannerRef.current.stop()
+                await qrCodeInstanceRef.current.stop()
+            } catch {
+                // ignore
+            }
+            if (isMountedRef.current) {
                 setIsScanning(false)
-            } catch (err) {
-                console.error('Stop scanner error:', err)
             }
         }
     }
 
     useEffect(() => {
-        startScanner()
+        isMountedRef.current = true
+
+        // Slight deferral avoids React 19 mount race condition
+        const timer = setTimeout(() => {
+            startScanner()
+        }, 150)
+
         return () => {
-            if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => {})
+            isMountedRef.current = false
+            clearTimeout(timer)
+            if (qrCodeInstanceRef.current) {
+                try {
+                    qrCodeInstanceRef.current.stop().catch(() => {})
+                } catch {
+                    // ignore
+                }
             }
         }
     }, [])
+
+    const handleManualSubmit = (e) => {
+        e.preventDefault()
+        if (!manualToken.trim()) return
+        processPassToken(manualToken.trim())
+    }
 
     return (
         <div className='max-w-md mx-auto px-4 py-4 sm:py-6 space-y-4'>
@@ -197,6 +249,18 @@ const GatekeeperScanScreen = () => {
                 <div className='flex items-center gap-1.5'>
                     <button
                         type='button'
+                        onClick={() => setShowManualInput((prev) => !prev)}
+                        className={`btn btn-circle btn-sm ${
+                            showManualInput
+                                ? 'btn-primary'
+                                : 'btn-ghost text-base-content/60'
+                        }`}
+                        title='Manual Token Entry / Barcode Wedge'
+                    >
+                        <Keyboard className='w-4 h-4' />
+                    </button>
+                    <button
+                        type='button'
                         onClick={() => setSoundEnabled((prev) => !prev)}
                         className='btn btn-circle btn-sm btn-ghost'
                         title={soundEnabled ? 'Mute Chimes' : 'Unmute Chimes'}
@@ -214,11 +278,38 @@ const GatekeeperScanScreen = () => {
                         title={isScanning ? 'Pause Camera' : 'Start Camera'}
                     >
                         <RefreshCw
-                            className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`}
+                            className={`w-4 h-4 ${
+                                isScanning
+                                    ? 'text-primary'
+                                    : 'text-base-content/40'
+                            }`}
                         />
                     </button>
                 </div>
             </div>
+
+            {/* Manual Token Input Box (Fallback) */}
+            {showManualInput && (
+                <form
+                    onSubmit={handleManualSubmit}
+                    className='bg-base-200/90 p-3 rounded-2xl border border-base-content/10 flex gap-2'
+                >
+                    <input
+                        type='text'
+                        placeholder='Paste or type 64-char token...'
+                        value={manualToken}
+                        onChange={(e) => setManualToken(e.target.value)}
+                        className='input input-xs sm:input-sm input-bordered w-full rounded-xl text-xs font-mono'
+                    />
+                    <button
+                        type='submit'
+                        disabled={isVerifying || !manualToken.trim()}
+                        className='btn btn-xs sm:btn-sm btn-primary rounded-xl font-bold px-3'
+                    >
+                        <Send className='w-3.5 h-3.5' />
+                    </button>
+                </form>
+            )}
 
             {/* Viewport Frame */}
             <div className='relative overflow-hidden rounded-3xl bg-black border-2 border-primary/30 aspect-square shadow-2xl flex items-center justify-center'>
@@ -234,7 +325,7 @@ const GatekeeperScanScreen = () => {
                     <div className='absolute inset-0 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-center gap-2 z-20 text-white animate-in fade-in'>
                         <span className='loading loading-spinner loading-lg text-primary'></span>
                         <span className='text-xs font-semibold tracking-wider uppercase'>
-                            Verifying with Atlas...
+                            Verifying Pass Token...
                         </span>
                     </div>
                 )}
@@ -248,7 +339,7 @@ const GatekeeperScanScreen = () => {
                         </p>
                         <button
                             onClick={startScanner}
-                            className='btn btn-sm btn-primary rounded-xl text-xs'
+                            className='btn btn-sm btn-primary rounded-xl text-xs font-bold'
                         >
                             Retry Camera
                         </button>
@@ -333,7 +424,7 @@ const GatekeeperScanScreen = () => {
                                     <div className='space-y-0.5 col-span-2 pt-1'>
                                         <p className='text-[10px] opacity-70 flex items-center gap-1'>
                                             <Calendar className='w-3 h-3' />{' '}
-                                            Entry Timestamp:{' '}
+                                            Check-In Time:{' '}
                                             <span className='font-mono'>
                                                 {new Date(
                                                     scanResult.data

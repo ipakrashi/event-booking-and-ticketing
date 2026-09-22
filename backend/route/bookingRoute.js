@@ -54,7 +54,12 @@ router.put(
 
 // Digital Pass & Gate Scanner
 router.get('/:id/entry-pass', protect, getDigitalEntryPass)
-router.post('/verify-entry', protect, verifyGateEntry)
+router.post(
+    '/verify-entry',
+    protect,
+    restrictTo('admin', 'organizer'),
+    verifyGateEntry,
+)
 
 // Shipping & Dispatch
 router.get(
