@@ -4,11 +4,15 @@ import { Routes, Route } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import Login from './pages/Login'
+import RegisterScreen from './pages/RegisterScreen'
 import Home from './pages/Home'
 import EventsCatalog from './pages/EventsCatalog'
 import EventDetails from './pages/EventDetails'
 import GatekeeperScanScreen from './pages/GatekeeperScanScreen'
 import MyBookingsScreen from './pages/MyBookingsScreen'
+import ProfileScreen from './pages/ProfileScreen'
+import ForgotPasswordScreen from './pages/ForgotPasswordScreen'
+import ResetPasswordScreen from './pages/ResetPasswordScreen'
 
 const App = () => {
     return (
@@ -20,7 +24,17 @@ const App = () => {
                     <Route path='/events' element={<EventsCatalog />} />
                     <Route path='/events/:id' element={<EventDetails />} />
                     <Route path='/login' element={<Login />} />
+                    <Route path='/register' element={<RegisterScreen />} />
+                    <Route
+                        path='/forgot-password'
+                        element={<ForgotPasswordScreen />}
+                    />
+                    <Route
+                        path='/reset-password/:token'
+                        element={<ResetPasswordScreen />}
+                    />
                     <Route path='/my-bookings' element={<MyBookingsScreen />} />
+                    <Route path='/profile' element={<ProfileScreen />} />
                     <Route
                         path='/gatekeeper'
                         element={<GatekeeperScanScreen />}

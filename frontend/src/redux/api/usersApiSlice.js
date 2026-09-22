@@ -24,9 +24,36 @@ export const usersApiSlice = apiSlice.injectEndpoints({
                 method: 'POST',
             }),
         }),
+        updateUser: builder.mutation({
+            query: ({ id, ...userData }) => ({
+                url: `/api/users/${id}`,
+                method: 'PUT',
+                body: userData,
+            }),
+            invalidatesTags: ['User'],
+        }),
+        forgotPassword: builder.mutation({
+            query: (data) => ({
+                url: '/api/users/forgot-password',
+                method: 'POST',
+                body: data, // { email }
+            }),
+        }),
+        resetPassword: builder.mutation({
+            query: ({ token, ...data }) => ({
+                url: `/api/users/reset-password/${token}`,
+                method: 'PUT',
+                body: data, // { password }
+            }),
+        }),
     }),
 })
 
-// RTK Query automatically creates custom React hooks for each endpoint
-export const { useLoginMutation, useRegisterMutation, useLogoutApiMutation } =
-    usersApiSlice
+export const {
+    useLoginMutation,
+    useRegisterMutation,
+    useLogoutApiMutation,
+    useUpdateUserMutation,
+    useForgotPasswordMutation,
+    useResetPasswordMutation,
+} = usersApiSlice

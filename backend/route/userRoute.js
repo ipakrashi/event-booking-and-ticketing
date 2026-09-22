@@ -7,6 +7,8 @@ import {
     logoutUser,
     editUser,
     deleteUser,
+    forgotPassword,
+    resetPassword,
 } from '../controller/userController.js'
 
 const router = express.Router()
@@ -15,6 +17,10 @@ const router = express.Router()
 router.post('/', addUser)
 router.post('/login', loginUser)
 router.post('/logout', logoutUser)
+
+// Password recovery routes
+router.post('/forgot-password', forgotPassword)
+router.put('/reset-password/:token', resetPassword)
 
 // Admin-only user directory route
 router.get('/', protect, admin, getUsers)
