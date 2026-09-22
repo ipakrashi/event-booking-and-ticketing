@@ -35,6 +35,7 @@ import {
     Tag,
     CalendarPlus,
     CalendarRange,
+    MessageSquare,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -507,15 +508,15 @@ const Navbar = () => {
                                                 Event Management
                                             </Link>
                                         </li>
-                                        {/* <li>
+                                        <li>
                                             <Link
-                                                to='/admin/events/create'
+                                                to='/admin/reviews'
                                                 className='flex items-center gap-2 text-sm rounded-lg font-medium'
                                             >
-                                                <CalendarPlus className='w-4 h-4 text-primary' />{' '}
-                                                Create Event
+                                                <MessageSquare className='w-4 h-4 text-primary' />{' '}
+                                                Review Moderation
                                             </Link>
-                                        </li> */}
+                                        </li>
                                         <li>
                                             <Link
                                                 to='/admin/bookings'
@@ -616,14 +617,15 @@ const Navbar = () => {
                                         <CalendarRange className='w-3.5 h-3.5 text-primary' />
                                         <span>Events</span>
                                     </Link>
-                                    {/* <Link
-                                        to='/admin/events/create'
-                                        onClick={() => setMobileMenuOpen(false)}
+
+                                    <Link
+                                        to='/admin/reviews'
                                         className='flex items-center gap-2 p-2 rounded-lg bg-base-100 text-xs font-semibold text-base-content'
                                     >
-                                        <CalendarPlus className='w-3.5 h-3.5 text-primary' />
-                                        <span>Create Event</span>
-                                    </Link> */}
+                                        <MessageSquare className='w-4 h-4 text-primary' />{' '}
+                                        Review Moderation
+                                    </Link>
+
                                     <Link
                                         to='/admin/roles'
                                         onClick={() => setMobileMenuOpen(false)}

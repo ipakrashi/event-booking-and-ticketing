@@ -302,3 +302,100 @@ export const getLatestReviews = asyncHandler(async (req, res) => {
         data: reviews,
     })
 })
+// ============================================================================
+// @desc    Get All Reviews for Moderation (Cross-Event: Admin all, Organizer own events)
+// @route   GET /api/reviews/admin
+// @access  Private (Admin / Organizer)
+// ============================================================================
+export const getAllReviewsForModeration = asyncHandler(async (req, res) => {
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOrganizer = userRole === 'organizer'
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error('Not authorized to access review moderation')
+    }
+
+    let filter = {}
+
+    // Organizers only see reviews for events they organized
+    if (isOrganizer && !isAdmin) {
+        const myEvents = await Event.find({ organizerId: req.user._id }).select(
+            '_id',
+        )
+        const myEventIds = myEvents.map((e) => e._id)
+        filter.event = { $in: myEventIds }
+    }
+
+    const { status, eventId } = req.query
+    if (status && status !== 'all') {
+        filter.status = status
+    }
+    if (eventId && mongoose.Types.ObjectId.isValid(eventId)) {
+        filter.event = eventId
+    }
+
+    const reviews = await Review.find(filter)
+        .populate('user', 'userName email')
+        .populate('event', 'title startDate organizerId')
+        .populate('moderatedBy', 'userName')
+        .sort({ createdAt: -1 })
+
+    res.status(200).json({
+        success: true,
+        count: reviews.length,
+        data: reviews,
+    })
+})
+
+// ============================================================================
+// @desc    Moderate a Review (Approve, Reject, On Hold)
+// @route   PUT /api/reviews/:reviewId/moderate
+// @access  Private (Admin / Organizer)
+// ============================================================================
+export const moderateReviewDirect = asyncHandler(async (req, res) => {
+    const { reviewId } = req.params
+    const { status, moderationRemarks } = req.body
+
+    const allowedStatuses = ['approved', 'rejected', 'on_hold']
+    if (!allowedStatuses.includes(status)) {
+        res.status(400)
+        throw new Error(
+            "Invalid status. Must be 'approved', 'rejected', or 'on_hold'",
+        )
+    }
+
+    const review = await Review.findById(reviewId).populate(
+        'event',
+        'organizerId title',
+    )
+    if (!review) {
+        res.status(404)
+        throw new Error('Review not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOwner =
+        review.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOwner) {
+        res.status(403)
+        throw new Error('Not authorized to moderate this review')
+    }
+
+    review.status = status
+    review.moderatedBy = req.user._id
+    if (moderationRemarks !== undefined) {
+        review.moderationRemarks = moderationRemarks?.trim() || null
+    }
+
+    await review.save()
+
+    res.status(200).json({
+        success: true,
+        message: `Review marked as ${status}`,
+        data: review,
+    })
+})

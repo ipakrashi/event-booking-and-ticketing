@@ -83,6 +83,21 @@ export const eventsApiSlice = apiSlice.injectEndpoints({
             }),
             invalidatesTags: ['EventReview', 'Event'],
         }),
+        getAllReviewsForModeration: builder.query({
+            query: (params) => ({
+                url: '/api/reviews/admin',
+                params,
+            }),
+            providesTags: ['EventReview'],
+        }),
+        moderateReviewDirect: builder.mutation({
+            query: ({ reviewId, status, moderationRemarks }) => ({
+                url: `/api/reviews/${reviewId}/moderate`,
+                method: 'PUT',
+                body: { status, moderationRemarks },
+            }),
+            invalidatesTags: ['EventReview', 'Event', 'Review'],
+        }),
     }),
 })
 
@@ -98,7 +113,8 @@ export const {
     useGetMyReviewStatusQuery,
     useGetEventReviewsForModerationQuery,
     useModerateReviewMutation,
+    useGetAllReviewsForModerationQuery,
+    useModerateReviewDirectMutation,
 } = eventsApiSlice
 
-// Backward-compatibility alias
 export const useGetAllEventsQuery = eventsApiSlice.endpoints.getEvents.useQuery
