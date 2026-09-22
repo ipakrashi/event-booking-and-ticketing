@@ -7,14 +7,13 @@ import QRCode from 'qrcode'
 import Event from '../model/event.js'
 import Booking from '../model/booking.js'
 
-// ==================================
-//  @desc :     Create New Booking(s) for an Event
-//  @route:     POST /api/bookings
-//  @access:    Private (Logged-in Users)
-// ==================================
+// =========================================================================
+// @desc :    Create New Booking(s) in 'request_sent' & 'not_paid' status
+// @route:    POST /api/bookings
+// @access:   Private (Logged-in Users)
+// =========================================================================
 export const createBooking = asyncHandler(async (req, res) => {
-    const { eventId, selectedTiers, ticketTierId, bookedQty, paymentMode } =
-        req.body
+    const { eventId, selectedTiers, ticketTierId, bookedQty } = req.body
     const userId = req.user._id
 
     if (!eventId || (!selectedTiers && (!ticketTierId || !bookedQty))) {
@@ -29,7 +28,6 @@ export const createBooking = asyncHandler(async (req, res) => {
         throw new Error('Invalid event ID format')
     }
 
-    // 1. Fetch target event
     const event = await Event.findById(eventId)
     if (!event) {
         res.status(404)
@@ -44,7 +42,6 @@ export const createBooking = asyncHandler(async (req, res) => {
         )
     }
 
-    // 2. Normalize items array
     let itemsToBook = []
     if (Array.isArray(selectedTiers) && selectedTiers.length > 0) {
         itemsToBook = selectedTiers.map((item) => ({
@@ -60,7 +57,6 @@ export const createBooking = asyncHandler(async (req, res) => {
         ]
     }
 
-    // Validate quantities
     for (const item of itemsToBook) {
         if (
             !mongoose.Types.ObjectId.isValid(item.tierId) ||
@@ -72,7 +68,6 @@ export const createBooking = asyncHandler(async (req, res) => {
         }
     }
 
-    // 3. Atomically Reserve Inventory for All Selected Tiers
     const createdBookings = []
     const rollbacks = []
 
@@ -92,7 +87,7 @@ export const createBooking = asyncHandler(async (req, res) => {
                 )
             }
 
-            // Atomic decrement with optimistic concurrency
+            // Atomically reserve tier inventory
             const updatedEvent = await Event.findOneAndUpdate(
                 {
                     _id: eventId,
@@ -114,20 +109,16 @@ export const createBooking = asyncHandler(async (req, res) => {
 
             if (!updatedEvent) {
                 throw new Error(
-                    `Seat availability changed for tier "${tier.name}". Please retry your reservation.`,
+                    `Seat availability changed for tier "${tier.name}". Please retry.`,
                 )
             }
 
             rollbacks.push({ tierId: item.tierId, quantity: item.quantity })
 
-            // Financial computation
             const unitPrice = tier.price
             const totalAmount = unitPrice * item.quantity
 
-            // Auto-confirm with payment details and immediate anti-passback token
-            const entryPassToken = crypto.randomBytes(32).toString('hex')
-            const trxnId = `EP-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`
-
+            // STRICT INITIALIZATION: 'request_sent', 'not_paid', no pass token
             const booking = await Booking.create({
                 user: userId,
                 event: eventId,
@@ -136,20 +127,19 @@ export const createBooking = asyncHandler(async (req, res) => {
                 unitPrice: unitPrice,
                 bookedQty: item.quantity,
                 totalAmount: totalAmount,
-                bookingStatus: 'confirmed',
-                paymentStatus: 'paid',
+                bookingStatus: 'request_sent',
+                paymentStatus: 'not_paid',
                 paymentDetails: {
-                    mode: paymentMode || 'upi',
-                    trxnId: trxnId,
+                    mode: null,
+                    trxnId: null,
                 },
                 despatchStatus: 'not_dispatched',
-                entryPassToken: entryPassToken,
+                entryPassToken: null,
             })
 
             createdBookings.push(booking)
         }
     } catch (err) {
-        // Rollback any successfully decremented inventory if subsequent tiers fail
         for (const rb of rollbacks) {
             await Event.updateOne(
                 { _id: eventId, 'ticketTiers._id': rb.tierId },
@@ -162,21 +152,25 @@ export const createBooking = asyncHandler(async (req, res) => {
 
     res.status(201).json({
         success: true,
-        message: 'Booking confirmed and Entry Passes issued successfully',
+        message:
+            'Booking request registered successfully. Complete payment to confirm and receive your pass.',
         count: createdBookings.length,
         data:
             createdBookings.length === 1 ? createdBookings[0] : createdBookings,
     })
 })
 
-// ==================================
-//  @desc :     Get Logged-in User Bookings
-//  @route:     GET /api/bookings/my-bookings
-//  @access:    Private
-// ==================================
+// =========================================================================
+// @desc :    Get Logged-in User Bookings
+// @route:    GET /api/bookings/my-bookings
+// @access:   Private
+// =========================================================================
 export const getMyBookings = asyncHandler(async (req, res) => {
     const bookings = await Booking.find({ user: req.user._id })
-        .populate('event', 'title startDate endDate venueId posterImage status')
+        .populate(
+            'event',
+            'title startDate endDate venueId posterImage status organizerId',
+        )
         .populate({
             path: 'event',
             populate: {
@@ -193,11 +187,45 @@ export const getMyBookings = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Get All Bookings for an Event (Attendee Roster)
-//  @route:     GET /api/bookings/event/:eventId
-//  @access:    Private/Admin/Organizer
-// ==================================
+// =========================================================================
+// @desc :    Get All System Bookings (Admin) or Organizer Bookings
+// @route:    GET /api/bookings/admin/all
+// @access:   Private (Admin / Organizer)
+// =========================================================================
+export const getAllBookings = asyncHandler(async (req, res) => {
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+
+    let filter = {}
+    if (!isAdmin) {
+        const myEvents = await Event.find({ organizerId: req.user._id }).select(
+            '_id',
+        )
+        const myEventIds = myEvents.map((e) => e._id)
+        filter = { event: { $in: myEventIds } }
+    }
+
+    const bookings = await Booking.find(filter)
+        .populate('user', 'userName email phone')
+        .populate({
+            path: 'event',
+            select: 'title startDate organizerId venueId',
+            populate: { path: 'venueId', select: 'name city' },
+        })
+        .sort({ createdAt: -1 })
+
+    res.status(200).json({
+        success: true,
+        count: bookings.length,
+        data: bookings,
+    })
+})
+
+// =========================================================================
+// @desc :    Get All Bookings for an Event (Attendee Roster)
+// @route:    GET /api/bookings/event/:eventId
+// @access:   Private/Admin/Organizer
+// =========================================================================
 export const getEventBookings = asyncHandler(async (req, res) => {
     const { eventId } = req.params
 
@@ -212,7 +240,7 @@ export const getEventBookings = asyncHandler(async (req, res) => {
         throw new Error('Event not found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isOwner =
         event.organizerId &&
         event.organizerId.toString() === req.user._id.toString()
@@ -251,11 +279,11 @@ export const getEventBookings = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Update Payment Status
-//  @route:     PUT /api/bookings/:id/pay
-//  @access:    Private
-// ==================================
+// =========================================================================
+// @desc :    Record / Confirm Manual Payment
+// @route:    PUT /api/bookings/:id/pay
+// @access:   Private (User for own booking, Admin or Organizer for event)
+// =========================================================================
 export const updatePaymentStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { paymentAmount, paymentDetails } = req.body
@@ -272,65 +300,211 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    const bookingDetails = await Booking.findById(id)
-    if (!bookingDetails) {
+    const booking = await Booking.findById(id).populate(
+        'event',
+        'organizerId title',
+    )
+    if (!booking) {
         res.status(404)
-        throw new Error('Booking Details Not Found')
+        throw new Error('Booking not found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
-    const isOwner = bookingDetails.user.toString() === req.user._id.toString()
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isOwner = booking.user.toString() === req.user._id.toString()
     const isAdmin = userRole === 'admin'
+    const isOrganizer =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
 
-    if (!isOwner && !isAdmin) {
+    if (!isOwner && !isAdmin && !isOrganizer) {
         res.status(403)
+        throw new Error('Not authorized to process payment for this booking')
+    }
+
+    if (booking.paymentStatus === 'paid') {
+        res.status(400)
+        throw new Error('Booking is already paid')
+    }
+
+    if (['cancelled', 'rejected'].includes(booking.bookingStatus)) {
+        res.status(400)
         throw new Error(
-            'You are not authorized to update payment for this booking',
+            `Cannot submit payment for a ${booking.bookingStatus} booking`,
         )
     }
 
-    if (bookingDetails.paymentStatus === 'paid') {
-        res.status(400)
-        throw new Error('There are no payments pending for this booking')
-    }
-
-    if (bookingDetails.bookingStatus === 'cancelled') {
-        res.status(400)
-        throw new Error('Cannot submit payment for a cancelled booking')
-    }
-
-    if (Number(paymentAmount) !== bookingDetails.totalAmount) {
+    if (Number(paymentAmount) !== booking.totalAmount) {
         res.status(400)
         throw new Error(
-            `Paid amount (${paymentAmount}) does not match outstanding total (${bookingDetails.totalAmount})`,
+            `Paid amount (₹${paymentAmount}) does not match outstanding total (₹${booking.totalAmount})`,
         )
     }
 
-    bookingDetails.paymentStatus = 'paid'
-    bookingDetails.bookingStatus = 'confirmed'
-    bookingDetails.paymentDetails = {
+    booking.paymentStatus = 'paid'
+    booking.bookingStatus = 'confirmed'
+    booking.paymentDetails = {
         mode: paymentDetails.mode.toLowerCase().trim(),
         trxnId: paymentDetails.trxnId.trim(),
     }
 
-    if (!bookingDetails.entryPassToken) {
-        bookingDetails.entryPassToken = crypto.randomBytes(32).toString('hex')
+    if (!booking.entryPassToken) {
+        booking.entryPassToken = crypto.randomBytes(32).toString('hex')
     }
 
-    const updatedBooking = await bookingDetails.save()
+    const updatedBooking = await booking.save()
 
     res.status(200).json({
         success: true,
-        message: 'Payment recorded and booking confirmed successfully',
+        message: 'Payment received. Booking is confirmed.',
         data: updatedBooking,
     })
 })
 
-// ==================================
-//  @desc :     Update Dispatch Status
-//  @route:     PUT /api/bookings/:id/dispatch
-//  @access:    Private (Admin / Organizer)
-// ==================================
+// =========================================================================
+// @desc :    Customer Request Cancellation & Refund
+// @route:    PUT /api/bookings/:id/request-refund
+// @access:   Private (Customer / Admin)
+// =========================================================================
+export const requestBookingRefund = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { cancellationReason } = req.body
+
+    const booking = await Booking.findById(id)
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isCustomer = booking.user.toString() === req.user._id.toString()
+    const isAdmin = userRole === 'admin'
+
+    if (!isCustomer && !isAdmin) {
+        res.status(403)
+        throw new Error('Not authorized to cancel this booking')
+    }
+
+    if (
+        booking.despatchStatus === 'dispatched' ||
+        booking.despatchStatus === 'received'
+    ) {
+        res.status(400)
+        throw new Error(
+            `Cannot cancel tickets that have already been ${booking.despatchStatus}`,
+        )
+    }
+
+    if (
+        ['cancelled', 'refund_issued', 'refund_requested'].includes(
+            booking.bookingStatus,
+        )
+    ) {
+        res.status(400)
+        throw new Error(
+            `Booking is already in '${booking.bookingStatus}' state`,
+        )
+    }
+
+    booking.cancellationReason = cancellationReason || 'Requested by customer'
+    booking.refundAmount = booking.totalAmount
+
+    if (booking.paymentStatus === 'paid') {
+        booking.bookingStatus = 'refund_requested'
+        booking.paymentStatus = 'refund_requested'
+    } else {
+        await Event.updateOne(
+            { _id: booking.event, 'ticketTiers._id': booking.ticketTierId },
+            { $inc: { 'ticketTiers.$.soldQuantity': -booking.bookedQty } },
+        )
+        booking.bookingStatus = 'cancelled'
+        booking.cancelledQty = booking.bookedQty
+    }
+
+    const updated = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message:
+            booking.paymentStatus === 'refund_requested'
+                ? 'Refund request submitted. Awaiting Admin/Organizer approval.'
+                : 'Unpaid booking cancelled and seat released.',
+        data: updated,
+    })
+})
+
+// =========================================================================
+// @desc :    Approve & Process Refund (Admin / Organizer)
+// @route:    PUT /api/bookings/:id/process-refund
+// @access:   Private (Admin / Event Organizer)
+// =========================================================================
+export const processRefundApproval = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { action, adminRemarks } = req.body
+
+    const booking = await Booking.findById(id).populate(
+        'event',
+        'organizerId title',
+    )
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOrganizer =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error('Not authorized to approve refunds for this event')
+    }
+
+    if (booking.bookingStatus !== 'refund_requested') {
+        res.status(400)
+        throw new Error(
+            `No active refund requested for this booking. Current status: ${booking.bookingStatus}`,
+        )
+    }
+
+    if (action === 'approve') {
+        await Event.updateOne(
+            { _id: booking.event._id, 'ticketTiers._id': booking.ticketTierId },
+            { $inc: { 'ticketTiers.$.soldQuantity': -booking.bookedQty } },
+        )
+
+        booking.cancelledQty = booking.bookedQty
+        booking.bookingStatus = 'refund_issued'
+        booking.paymentStatus = 'refunded'
+        booking.entryPassToken = null
+        booking.cancellationReason = adminRemarks
+            ? `${booking.cancellationReason} | Remarks: ${adminRemarks}`
+            : booking.cancellationReason
+    } else if (action === 'reject') {
+        booking.bookingStatus = 'confirmed'
+        booking.paymentStatus = 'paid'
+        booking.cancellationReason = `Refund Rejected: ${adminRemarks || 'Conditions not met'}`
+    } else {
+        res.status(400)
+        throw new Error("Invalid action. Must be 'approve' or 'reject'")
+    }
+
+    const updated = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message:
+            action === 'approve'
+                ? 'Refund approved and inventory restored'
+                : 'Refund request rejected',
+        data: updated,
+    })
+})
+
+// =========================================================================
+// @desc :    Update Dispatch Status
+// @route:    PUT /api/bookings/:id/dispatch
+// @access:   Private (Admin / Organizer)
+// =========================================================================
 export const updateDispatchStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
     const { despatchDetails } = req.body
@@ -360,7 +534,7 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isAdmin = userRole === 'admin'
     const isOwner =
         booking.event?.organizerId?.toString() === req.user._id.toString()
@@ -437,11 +611,11 @@ export const updateDispatchStatus = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Get Physical Shipping Label
-//  @route:     GET /api/bookings/:id/shipping-label
-//  @access:    Private (Admin / Organizer)
-// ==================================
+// =========================================================================
+// @desc :    Get Physical Shipping Label
+// @route:    GET /api/bookings/:id/shipping-label
+// @access:   Private (Admin / Organizer)
+// =========================================================================
 export const getShippingLabel = asyncHandler(async (req, res) => {
     const { id } = req.params
 
@@ -462,7 +636,7 @@ export const getShippingLabel = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isAdmin = userRole === 'admin'
     const isOwner =
         booking.event?.organizerId?.toString() === req.user._id.toString()
@@ -500,11 +674,11 @@ export const getShippingLabel = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Update Ticket Receipt Status
-//  @route:     PUT /api/bookings/:id/receive
-//  @access:    Private (Customer / Admin / Organizer)
-// ==================================
+// =========================================================================
+// @desc :    Update Ticket Receipt Status
+// @route:    PUT /api/bookings/:id/receive
+// @access:   Private (Customer / Admin / Organizer)
+// =========================================================================
 export const updateReceiveStatus = asyncHandler(async (req, res) => {
     const { id } = req.params
 
@@ -523,7 +697,7 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
         throw new Error('Booking Details Not Found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isAdmin = userRole === 'admin'
     const isOwner =
         bookingDetails.event?.organizerId?.toString() ===
@@ -562,11 +736,11 @@ export const updateReceiveStatus = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Bulk Update Ticket Receipt Status
-//  @route:     PATCH /api/bookings/bulk-receive
-//  @access:    Private (Admin / Organizer)
-// ==================================
+// =========================================================================
+// @desc :    Bulk Update Ticket Receipt Status
+// @route:    PATCH /api/bookings/bulk-receive
+// @access:   Private (Admin / Organizer)
+// =========================================================================
 export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
     const { bookingIds } = req.body
 
@@ -585,7 +759,7 @@ export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
         )
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isAdmin = userRole === 'admin'
 
     let filter = {
@@ -615,128 +789,11 @@ export const bulkUpdateReceiveStatus = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Cancel Booking & Rollback Inventory
-//  @route:     PUT /api/bookings/:id/cancel
-//  @access:    Private (Customer / Organizer / Admin)
-// ==================================
-export const cancelBooking = asyncHandler(async (req, res) => {
-    const { id } = req.params
-    const { cancelledQty, cancellationReason } = req.body
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        res.status(400)
-        throw new Error('Invalid booking ID format')
-    }
-
-    const parsedQty = Number(cancelledQty)
-    if (!parsedQty || !Number.isInteger(parsedQty) || parsedQty <= 0) {
-        res.status(400)
-        throw new Error('Valid cancel quantity is required')
-    }
-
-    const bookingDetails = await Booking.findById(id).populate(
-        'event',
-        'organizerId',
-    )
-
-    if (!bookingDetails) {
-        res.status(404)
-        throw new Error('Booking Details Not Found')
-    }
-
-    const userRole = req.user.role?.role || req.user.role
-    const isAdmin = userRole === 'admin'
-    const isOwner =
-        bookingDetails.event?.organizerId?.toString() ===
-        req.user._id.toString()
-    const isCustomer =
-        bookingDetails.user.toString() === req.user._id.toString()
-
-    if (!isCustomer && !isAdmin && !isOwner) {
-        res.status(403)
-        throw new Error(
-            'You are not authorized to cancel tickets for an event you do not own',
-        )
-    }
-
-    if (
-        bookingDetails.despatchStatus === 'dispatched' ||
-        bookingDetails.despatchStatus === 'received'
-    ) {
-        res.status(400)
-        throw new Error(
-            `Cannot cancel tickets that have already been ${bookingDetails.despatchStatus} for this event`,
-        )
-    }
-
-    const nonCancellableStatuses = [
-        'rejected',
-        'cancelled',
-        'refund_issued',
-        'refund_requested',
-    ]
-    if (nonCancellableStatuses.includes(bookingDetails.bookingStatus)) {
-        res.status(400)
-        throw new Error(
-            `Cannot cancel tickets that are currently marked as ${bookingDetails.bookingStatus}`,
-        )
-    }
-
-    if (parsedQty !== bookingDetails.bookedQty) {
-        res.status(400)
-        throw new Error(
-            `Partial cancellations are not supported. Tickets Booked: ${bookingDetails.bookedQty}, Cancellation Requested: ${parsedQty}`,
-        )
-    }
-
-    // Atomic Inventory Rollback
-    const eventId = bookingDetails.event._id || bookingDetails.event
-    const updatedEvent = await Event.findOneAndUpdate(
-        {
-            _id: eventId,
-            'ticketTiers._id': bookingDetails.ticketTierId,
-        },
-        {
-            $inc: { 'ticketTiers.$.soldQuantity': -parsedQty },
-        },
-        {
-            returnDocument: 'after',
-            runValidators: true,
-        },
-    )
-
-    if (!updatedEvent) {
-        res.status(500)
-        throw new Error(
-            'Failed to restore ticket inventory during cancellation',
-        )
-    }
-
-    bookingDetails.cancelledQty = parsedQty
-    bookingDetails.cancellationReason = cancellationReason || 'Not specified'
-    bookingDetails.refundAmount = parsedQty * bookingDetails.unitPrice
-    bookingDetails.bookingStatus = 'cancelled'
-    bookingDetails.entryPassToken = null
-
-    if (bookingDetails.paymentStatus === 'paid') {
-        bookingDetails.paymentStatus = 'refund_requested'
-    }
-
-    const updatedBooking = await bookingDetails.save()
-
-    res.status(200).json({
-        success: true,
-        message: 'Booking cancelled and ticket inventory restored successfully',
-        data: updatedBooking,
-    })
-})
-
-// ==================================
-//  @desc :     Get Digital Entry Pass with Dynamic QR Code
-//  @route:     GET /api/bookings/:id/entry-pass
-//  @access:    Private (Customer Owner / Admin)
-// ==================================
+// =========================================================================
+// @desc :    Get Digital Entry Pass with Dynamic QR Code
+// @route:    GET /api/bookings/:id/entry-pass
+// @access:   Private (Customer Owner / Admin)
+// =========================================================================
 export const getDigitalEntryPass = asyncHandler(async (req, res) => {
     const { id } = req.params
 
@@ -764,7 +821,7 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
         throw new Error('Booking not found')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isOwner = booking.user._id.toString() === req.user._id.toString()
     const isAdmin = userRole === 'admin'
 
@@ -773,13 +830,26 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to access this entry pass')
     }
 
-    if (
-        booking.paymentStatus !== 'paid' ||
-        booking.bookingStatus !== 'confirmed'
-    ) {
+    // STRICT CONDITIONS: Paid, Confirmed, and Dispatched/Received
+    if (booking.paymentStatus !== 'paid') {
         res.status(400)
         throw new Error(
-            `Cannot generate entry pass for a booking with payment status '${booking.paymentStatus}' and booking status '${booking.bookingStatus}'`,
+            'Entry Pass locked: Payment has not been completed or verified.',
+        )
+    }
+
+    if (booking.bookingStatus !== 'confirmed') {
+        res.status(400)
+        throw new Error(
+            `Entry Pass locked: Booking is currently in '${booking.bookingStatus}' status.`,
+        )
+    }
+
+    const allowedDespatch = ['dispatched', 'received']
+    if (!allowedDespatch.includes(booking.despatchStatus)) {
+        res.status(400)
+        throw new Error(
+            `Entry Pass locked: Physical tickets/wristbands are currently '${booking.despatchStatus}'. Must be 'dispatched' or 'received'.`,
         )
     }
 
@@ -806,6 +876,7 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
             entryPassToken: booking.entryPassToken,
             isCheckedIn: booking.isCheckedIn,
             checkInTimestamp: booking.checkInTimestamp,
+            despatchStatus: booking.despatchStatus,
             event: {
                 title: booking.event?.title,
                 startDate: booking.event?.startDate,
@@ -825,11 +896,11 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
     })
 })
 
-// ==================================
-//  @desc :     Verify Entry Pass at Gate Scanner (Anti-Passback)
-//  @route:     POST /api/bookings/verify-entry
-//  @access:    Private (Admin / Event Staff / Organizer)
-// ==================================
+// =========================================================================
+// @desc :    Verify Entry Pass at Gate Scanner (Anti-Passback)
+// @route:    POST /api/bookings/verify-entry
+// @access:   Private (Admin / Event Staff / Organizer)
+// =========================================================================
 export const verifyGateEntry = asyncHandler(async (req, res) => {
     const { passToken } = req.body
 
@@ -847,7 +918,7 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         throw new Error('Invalid or non-existent entry pass. Admission Denied.')
     }
 
-    const userRole = req.user.role?.role || req.user.role
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
     const isAdmin = userRole === 'admin'
     const isOrganizer =
         booking.event?.organizerId?.toString() === req.user._id.toString()
@@ -895,5 +966,100 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
             checkInTimestamp: admittedBooking.checkInTimestamp,
             eventTitle: booking.event?.title,
         },
+    })
+})
+// =========================================================================
+// @desc :    Attendee Submits Offline Payment Proof / UTR Reference
+// @route:    PUT /api/bookings/:id/submit-payment
+// @access:   Private (Booking Owner)
+// =========================================================================
+export const submitPaymentDetails = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { mode, trxnId } = req.body
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400)
+        throw new Error('Invalid booking ID format')
+    }
+
+    if (!mode || !trxnId?.trim()) {
+        res.status(400)
+        throw new Error(
+            'Please specify payment mode and transaction/reference ID',
+        )
+    }
+
+    const booking = await Booking.findById(id)
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    if (booking.user.toString() !== req.user._id.toString()) {
+        res.status(403)
+        throw new Error('Not authorized to submit payment for this booking')
+    }
+
+    if (booking.paymentStatus === 'paid') {
+        res.status(400)
+        throw new Error('Booking is already marked as paid')
+    }
+
+    booking.paymentStatus = 'pending_verification'
+    booking.paymentDetails = {
+        mode: mode.toLowerCase().trim(),
+        trxnId: trxnId.trim(),
+    }
+
+    const updated = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Payment details submitted for verification',
+        data: updated,
+    })
+})
+
+// =========================================================================
+// @desc :    Admin / Organizer Approves Payment & Issues Token
+// @route:    PUT /api/bookings/:id/approve-payment
+// @access:   Private (Admin / Event Organizer)
+// =========================================================================
+export const approvePaymentAndConfirm = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    const booking = await Booking.findById(id).populate(
+        'event',
+        'organizerId title',
+    )
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOrganizer =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error('Not authorized to approve payments for this booking')
+    }
+
+    booking.paymentStatus = 'paid'
+    booking.bookingStatus = 'confirmed'
+
+    // Generate pass token only upon approval
+    if (!booking.entryPassToken) {
+        booking.entryPassToken = crypto.randomBytes(32).toString('hex')
+    }
+
+    const updated = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Payment confirmed and Entry Pass token activated',
+        data: updated,
     })
 })

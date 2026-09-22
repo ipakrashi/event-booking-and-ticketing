@@ -69,7 +69,6 @@ const RegisterScreen = () => {
         }
 
         try {
-            // 1. Create account
             await register({
                 userName: userName.trim(),
                 email: email.trim().toLowerCase(),
@@ -77,7 +76,6 @@ const RegisterScreen = () => {
                 phone: trimmedPhone || null,
             }).unwrap()
 
-            // 2. Auto-login immediately after successful registration
             const loginRes = await login({
                 email: email.trim().toLowerCase(),
                 password,
@@ -121,18 +119,21 @@ const RegisterScreen = () => {
                     )}
 
                     {/* Form */}
-                    <form onSubmit={submitHandler} className='space-y-3.5 pt-1'>
+                    <form
+                        onSubmit={submitHandler}
+                        className='space-y-4 pt-1 w-full'
+                    >
                         {/* Name */}
-                        <div className='space-y-1'>
-                            <label className='text-xs font-bold text-base-content/70'>
+                        <div className='space-y-1.5 w-full'>
+                            <label className='text-xs font-bold text-base-content/70 block'>
                                 Full Name <span className='text-error'>*</span>
                             </label>
-                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary'>
+                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary w-full h-11'>
                                 <User className='w-4 h-4 text-base-content/40 shrink-0' />
                                 <input
                                     type='text'
                                     required
-                                    className='grow text-sm bg-transparent focus:outline-none'
+                                    className='grow text-sm bg-transparent focus:outline-none w-full'
                                     placeholder='John Doe'
                                     value={userName}
                                     onChange={(e) =>
@@ -143,17 +144,17 @@ const RegisterScreen = () => {
                         </div>
 
                         {/* Email */}
-                        <div className='space-y-1'>
-                            <label className='text-xs font-bold text-base-content/70'>
+                        <div className='space-y-1.5 w-full'>
+                            <label className='text-xs font-bold text-base-content/70 block'>
                                 Email Address{' '}
                                 <span className='text-error'>*</span>
                             </label>
-                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary'>
+                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary w-full h-11'>
                                 <Mail className='w-4 h-4 text-base-content/40 shrink-0' />
                                 <input
                                     type='email'
                                     required
-                                    className='grow text-sm bg-transparent focus:outline-none'
+                                    className='grow text-sm bg-transparent focus:outline-none w-full'
                                     placeholder='name@example.com'
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
@@ -162,16 +163,16 @@ const RegisterScreen = () => {
                         </div>
 
                         {/* Phone */}
-                        <div className='space-y-1'>
-                            <label className='text-xs font-bold text-base-content/70'>
+                        <div className='space-y-1.5 w-full'>
+                            <label className='text-xs font-bold text-base-content/70 block'>
                                 Mobile Number (Optional)
                             </label>
-                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary'>
+                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary w-full h-11'>
                                 <Phone className='w-4 h-4 text-base-content/40 shrink-0' />
                                 <input
                                     type='tel'
                                     maxLength={10}
-                                    className='grow text-sm bg-transparent focus:outline-none font-mono'
+                                    className='grow text-sm bg-transparent focus:outline-none font-mono w-full'
                                     placeholder='9830012345'
                                     value={phone}
                                     onChange={(e) => setPhone(e.target.value)}
@@ -180,17 +181,17 @@ const RegisterScreen = () => {
                         </div>
 
                         {/* Password */}
-                        <div className='space-y-1'>
-                            <label className='text-xs font-bold text-base-content/70'>
+                        <div className='space-y-1.5 w-full'>
+                            <label className='text-xs font-bold text-base-content/70 block'>
                                 Password <span className='text-error'>*</span>
                             </label>
-                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary'>
+                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary w-full h-11'>
                                 <Lock className='w-4 h-4 text-base-content/40 shrink-0' />
                                 <input
                                     type={showPassword ? 'text' : 'password'}
                                     required
                                     minLength={6}
-                                    className='grow text-sm bg-transparent focus:outline-none'
+                                    className='grow text-sm bg-transparent focus:outline-none w-full'
                                     placeholder='Min. 6 characters'
                                     value={password}
                                     onChange={(e) =>
@@ -200,7 +201,7 @@ const RegisterScreen = () => {
                                 <button
                                     type='button'
                                     onClick={() => setShowPassword((p) => !p)}
-                                    className='text-base-content/40 hover:text-base-content transition-colors'
+                                    className='text-base-content/40 hover:text-base-content transition-colors p-1'
                                     aria-label='Toggle password visibility'
                                 >
                                     {showPassword ? (
@@ -213,12 +214,12 @@ const RegisterScreen = () => {
                         </div>
 
                         {/* Confirm Password */}
-                        <div className='space-y-1'>
-                            <label className='text-xs font-bold text-base-content/70'>
+                        <div className='space-y-1.5 w-full'>
+                            <label className='text-xs font-bold text-base-content/70 block'>
                                 Confirm Password{' '}
                                 <span className='text-error'>*</span>
                             </label>
-                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary'>
+                            <label className='input input-bordered flex items-center gap-2.5 rounded-xl bg-base-200 border-base-content/15 focus-within:border-primary w-full h-11'>
                                 <Lock className='w-4 h-4 text-base-content/40 shrink-0' />
                                 <input
                                     type={
@@ -228,7 +229,7 @@ const RegisterScreen = () => {
                                     }
                                     required
                                     minLength={6}
-                                    className='grow text-sm bg-transparent focus:outline-none'
+                                    className='grow text-sm bg-transparent focus:outline-none w-full'
                                     placeholder='Repeat password'
                                     value={confirmPassword}
                                     onChange={(e) =>
@@ -240,7 +241,7 @@ const RegisterScreen = () => {
                                     onClick={() =>
                                         setShowConfirmPassword((p) => !p)
                                     }
-                                    className='text-base-content/40 hover:text-base-content transition-colors'
+                                    className='text-base-content/40 hover:text-base-content transition-colors p-1'
                                     aria-label='Toggle confirm password visibility'
                                 >
                                     {showConfirmPassword ? (
@@ -256,7 +257,7 @@ const RegisterScreen = () => {
                         <button
                             type='submit'
                             disabled={isLoading}
-                            className='btn btn-primary w-full rounded-xl font-bold gap-2 shadow-lg shadow-primary/30 mt-3'
+                            className='btn btn-primary w-full h-11 rounded-xl font-bold gap-2 shadow-lg shadow-primary/30 mt-2'
                         >
                             {isLoading ? (
                                 <>

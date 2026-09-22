@@ -13,6 +13,7 @@ import MyBookingsScreen from './pages/MyBookingsScreen'
 import ProfileScreen from './pages/ProfileScreen'
 import ForgotPasswordScreen from './pages/ForgotPasswordScreen'
 import ResetPasswordScreen from './pages/ResetPasswordScreen'
+import AdminBookingsScreen from './pages/admin/AdminBookingsScreen'
 
 const App = () => {
     return (
@@ -38,6 +39,10 @@ const App = () => {
                     <Route
                         path='/gatekeeper'
                         element={<GatekeeperScanScreen />}
+                    />
+                    <Route
+                        path='/admin/bookings'
+                        element={<AdminBookingsScreen />}
                     />
                 </Routes>
             </main>

@@ -31,6 +31,7 @@ import {
     Building2,
     Star,
     ScanLine,
+    CreditCard,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -469,6 +470,15 @@ const Navbar = () => {
                                         </li>
                                         <li>
                                             <Link
+                                                to='/admin/bookings'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <CreditCard className='w-4 h-4 text-primary' />{' '}
+                                                Bookings & Settlements
+                                            </Link>
+                                        </li>
+                                        <li>
+                                            <Link
                                                 to='/gatekeeper'
                                                 className='flex items-center gap-2 text-sm rounded-lg text-primary font-semibold bg-primary/10 hover:bg-primary/20'
                                             >
@@ -496,7 +506,6 @@ const Navbar = () => {
                                         </li>
                                     </>
                                 )}
-
                                 <div className='divider my-1 border-base-content/10'></div>
                                 <li>
                                     <button

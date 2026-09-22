@@ -4,45 +4,71 @@ import express from 'express'
 import {
     createBooking,
     getMyBookings,
+    getAllBookings,
     getEventBookings,
     updatePaymentStatus,
+    requestBookingRefund,
+    processRefundApproval,
     updateDispatchStatus,
     getShippingLabel,
     updateReceiveStatus,
     bulkUpdateReceiveStatus,
-    cancelBooking,
     getDigitalEntryPass,
     verifyGateEntry,
+    submitPaymentDetails,
+    approvePaymentAndConfirm,
 } from '../controller/bookingController.js'
-import { protect, admin, restrictTo } from '../middleware/appMiddleware.js'
+import { protect, restrictTo } from '../middleware/appMiddleware.js'
 
 const router = express.Router()
 
+// User creation & list
 router.post('/', protect, createBooking)
-// Gate Scanner: verify and admit
-router.post('/verify-entry', protect, verifyGateEntry)
-
 router.get('/my-bookings', protect, getMyBookings)
+
+// Admin & Organizer roster views
+router.get(
+    '/admin/all',
+    protect,
+    restrictTo('admin', 'organizer'),
+    getAllBookings,
+)
 router.get(
     '/event/:eventId',
     protect,
     restrictTo('admin', 'organizer'),
     getEventBookings,
 )
-// Customer or Admin: retrieve entry pass
-router.get('/:id/entry-pass', protect, getDigitalEntryPass)
-// Shipping label preview route
-router.get('/:id/shipping-label', protect, getShippingLabel)
 
-// Bulk actions placed before parameterized :id routes
+// Payment & Settlement (User / Organizer / Admin)
+router.put('/:id/pay', protect, updatePaymentStatus)
+
+// Refund Lifecycle
+router.put('/:id/request-refund', protect, requestBookingRefund)
+router.put(
+    '/:id/process-refund',
+    protect,
+    restrictTo('admin', 'organizer'),
+    processRefundApproval,
+)
+
+// Digital Pass & Gate Scanner
+router.get('/:id/entry-pass', protect, getDigitalEntryPass)
+router.post('/verify-entry', protect, verifyGateEntry)
+
+// Shipping & Dispatch
+router.get(
+    '/:id/shipping-label',
+    protect,
+    restrictTo('admin', 'organizer'),
+    getShippingLabel,
+)
 router.patch(
     '/bulk-receive',
     protect,
     restrictTo('admin', 'organizer'),
     bulkUpdateReceiveStatus,
 )
-
-router.put('/:id/pay', protect, updatePaymentStatus)
 router.put(
     '/:id/dispatch',
     protect,
@@ -50,6 +76,15 @@ router.put(
     updateDispatchStatus,
 )
 router.put('/:id/receive', protect, updateReceiveStatus)
-router.put('/:id/cancel', protect, cancelBooking)
+// Attendee logs offline transaction details
+router.put('/:id/submit-payment', protect, submitPaymentDetails)
+
+// Admin/Organizer reconciliation approval
+router.put(
+    '/:id/approve-payment',
+    protect,
+    restrictTo('admin', 'organizer'),
+    approvePaymentAndConfirm,
+)
 
 export default router

@@ -3,274 +3,364 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+    useGetMyBookingsQuery,
+    useRequestRefundMutation,
+    useGetEntryPassQuery,
+    useSubmitPaymentDetailsMutation,
+} from '../redux/api/bookingsApiSlice'
+import {
     Ticket,
     Calendar,
     MapPin,
     QrCode,
-    Printer,
-    X,
+    AlertCircle,
     CheckCircle2,
     Clock,
-    AlertCircle,
+    X,
+    RotateCcw,
     Truck,
-    PackageCheck,
-    ChevronRight,
-    Sparkles,
+    Lock,
+    Loader2,
+    CreditCard,
 } from 'lucide-react'
-import {
-    useGetMyBookingsQuery,
-    useGetDigitalEntryPassQuery,
-} from '../redux/api/bookingsApiSlice'
+
+// QR Pass Modal Component
+const QrModal = ({ bookingId, onClose }) => {
+    const { data, isLoading, error } = useGetEntryPassQuery(bookingId)
+    const pass = data?.data
+
+    return (
+        <div className='modal modal-open bg-black/70 backdrop-blur-sm z-50'>
+            <div className='modal-box max-w-sm rounded-3xl bg-base-100 p-6 text-center space-y-4 border border-base-content/10 shadow-2xl'>
+                <button
+                    onClick={onClose}
+                    className='btn btn-sm btn-circle btn-ghost absolute right-4 top-4'
+                >
+                    <X className='w-4 h-4' />
+                </button>
+
+                <h3 className='text-lg font-black text-base-content'>
+                    Digital Entry Pass
+                </h3>
+
+                {isLoading ? (
+                    <div className='py-12 flex flex-col items-center gap-3'>
+                        <Loader2 className='w-8 h-8 text-primary animate-spin' />
+                        <span className='text-xs opacity-60'>
+                            Generating dynamic pass...
+                        </span>
+                    </div>
+                ) : error ? (
+                    <div className='alert alert-error text-xs rounded-2xl'>
+                        <AlertCircle className='w-4 h-4 shrink-0' />
+                        <span>
+                            {error?.data?.message || 'Failed to generate pass'}
+                        </span>
+                    </div>
+                ) : (
+                    <div className='space-y-4'>
+                        <div className='p-3 bg-white rounded-2xl inline-block shadow-inner border'>
+                            <img
+                                src={pass?.qrCode}
+                                alt='Entry QR'
+                                className='w-52 h-52 mx-auto object-contain'
+                            />
+                        </div>
+
+                        <div className='text-left bg-base-200/60 p-3.5 rounded-2xl space-y-1 text-xs'>
+                            <div className='font-bold text-sm truncate text-base-content'>
+                                {pass?.event?.title}
+                            </div>
+                            <div className='opacity-70 flex items-center gap-1'>
+                                <MapPin className='w-3 h-3 text-primary' />{' '}
+                                {pass?.event?.venue} ({pass?.event?.city})
+                            </div>
+                            <div className='pt-1 border-t border-base-content/10 flex justify-between font-mono'>
+                                <span>Tier: {pass?.attendee?.tierName}</span>
+                                <span>Qty: {pass?.attendee?.bookedQty}</span>
+                            </div>
+                            <div className='text-[10px] text-primary font-mono truncate pt-1'>
+                                Token: {pass?.entryPassToken?.slice(0, 16)}...
+                            </div>
+                        </div>
+
+                        {pass?.isCheckedIn ? (
+                            <div className='badge badge-warning gap-1 text-xs py-2'>
+                                <Clock className='w-3 h-3' /> Already Admitted
+                            </div>
+                        ) : (
+                            <p className='text-[11px] opacity-60'>
+                                Present this pass at the gate for scanner
+                                check-in
+                            </p>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
 
 const MyBookingsScreen = () => {
-    const {
-        data: response,
-        isLoading,
-        isError,
-        refetch,
-    } = useGetMyBookingsQuery()
-    const bookings = response?.data || []
+    const { data, isLoading, error } = useGetMyBookingsQuery()
+    const bookings = data?.data || []
 
-    const [activePassId, setActivePassId] = useState(null)
+    const [requestRefund, { isLoading: isRefunding }] =
+        useRequestRefundMutation()
+    const [submitPayment, { isLoading: isSubmittingPay }] =
+        useSubmitPaymentDetailsMutation()
 
-    // Lazy load entry pass details and QR only when an attendee opens a modal
-    const {
-        data: passResponse,
-        isLoading: isPassLoading,
-        isError: isPassError,
-    } = useGetDigitalEntryPassQuery(activePassId, {
-        skip: !activePassId,
-    })
+    // Modal UI states
+    const [selectedBookingForQr, setSelectedBookingForQr] = useState(null)
+    const [refundModalBooking, setRefundModalBooking] = useState(null)
+    const [cancellationReason, setCancellationReason] = useState('')
 
-    const passData = passResponse?.data
+    // Payment proof modal states
+    const [paymentModalBooking, setPaymentModalBooking] = useState(null)
+    const [payMode, setPayMode] = useState('upi')
+    const [payTrxnId, setPayTrxnId] = useState('')
 
-    const handlePrint = () => {
-        window.print()
+    const handleRefundSubmit = async (e) => {
+        e.preventDefault()
+        if (!cancellationReason.trim()) return alert('Please enter a reason')
+        try {
+            await requestRefund({
+                id: refundModalBooking._id,
+                cancellationReason: cancellationReason.trim(),
+            }).unwrap()
+            setRefundModalBooking(null)
+            setCancellationReason('')
+        } catch (err) {
+            alert(err?.data?.message || 'Failed to submit refund request')
+        }
     }
 
-    const getStatusBadge = (booking) => {
-        if (booking.bookingStatus === 'cancelled') {
-            return (
-                <span className='badge badge-error gap-1 text-[11px] font-bold uppercase'>
-                    <AlertCircle className='w-3 h-3' /> Cancelled
-                </span>
-            )
+    const handlePaymentSubmit = async (e) => {
+        e.preventDefault()
+        if (!payTrxnId.trim())
+            return alert('Please enter transaction/reference ID')
+        try {
+            await submitPayment({
+                id: paymentModalBooking._id,
+                mode: payMode,
+                trxnId: payTrxnId.trim(),
+            }).unwrap()
+            setPaymentModalBooking(null)
+            setPayTrxnId('')
+        } catch (err) {
+            alert(err?.data?.message || 'Failed to submit payment details')
         }
-        if (
-            booking.paymentStatus === 'paid' &&
-            booking.bookingStatus === 'confirmed'
-        ) {
-            return (
-                <span className='badge badge-success gap-1 text-[11px] font-bold uppercase'>
-                    <CheckCircle2 className='w-3 h-3' /> Confirmed
-                </span>
-            )
-        }
+    }
+
+    if (isLoading) {
         return (
-            <span className='badge badge-warning gap-1 text-[11px] font-bold uppercase'>
-                <Clock className='w-3 h-3' />{' '}
-                {booking.paymentStatus.replace('_', ' ')}
-            </span>
+            <div className='min-h-[60vh] flex flex-col items-center justify-center gap-3'>
+                <Loader2 className='w-8 h-8 text-primary animate-spin' />
+                <p className='text-sm opacity-60'>
+                    Loading your tickets & bookings...
+                </p>
+            </div>
         )
     }
 
-    const getDispatchBadge = (status) => {
-        if (status === 'received') {
-            return (
-                <span className='badge badge-outline badge-success gap-1 text-[10px] font-semibold uppercase'>
-                    <PackageCheck className='w-3 h-3' /> Received
-                </span>
-            )
-        }
-        if (status === 'dispatched') {
-            return (
-                <span className='badge badge-outline badge-info gap-1 text-[10px] font-semibold uppercase'>
-                    <Truck className='w-3 h-3' /> Courier Dispatched
-                </span>
-            )
-        }
-        return null
+    if (error) {
+        return (
+            <div className='max-w-4xl mx-auto px-4 py-12 text-center'>
+                <div className='alert alert-error max-w-md mx-auto rounded-2xl'>
+                    <AlertCircle className='w-5 h-5' />
+                    <span>Failed to load bookings. Please try again.</span>
+                </div>
+            </div>
+        )
     }
 
     return (
-        <div className='max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6'>
-            {/* Header */}
-            <div className='flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-base-content/10 pb-6'>
-                <div>
-                    <div className='flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-wider mb-1'>
-                        <Ticket className='w-4 h-4' /> Attendee Passbook
-                    </div>
-                    <h1 className='text-2xl sm:text-3xl font-black text-base-content'>
-                        My Tickets & Gate Passes
-                    </h1>
-                </div>
-
-                <Link
-                    to='/events'
-                    className='btn btn-outline btn-sm rounded-xl gap-2 font-semibold'
-                >
-                    <Sparkles className='w-4 h-4 text-primary' /> Browse More
-                    Events
-                </Link>
+        <div className='max-w-6xl mx-auto px-4 py-8 space-y-6'>
+            <div>
+                <h1 className='text-2xl sm:text-3xl font-black text-base-content flex items-center gap-2'>
+                    <Ticket className='w-7 h-7 text-primary' /> My Tickets &
+                    Bookings
+                </h1>
+                <p className='text-xs sm:text-sm text-base-content/70 mt-1'>
+                    View reservation status, settlement progress, courier
+                    dispatch, and gate entry passes
+                </p>
             </div>
 
-            {/* Content States */}
-            {isLoading ? (
-                <div className='flex flex-col items-center justify-center py-20 gap-3'>
-                    <span className='loading loading-spinner loading-lg text-primary'></span>
-                    <p className='text-sm text-base-content/60 font-medium'>
-                        Loading your booking portfolio...
+            {bookings.length === 0 ? (
+                <div className='bg-base-100 rounded-3xl p-10 text-center border border-base-content/10 space-y-4 max-w-md mx-auto'>
+                    <div className='w-14 h-14 bg-base-200 rounded-2xl flex items-center justify-center mx-auto text-base-content/40'>
+                        <Ticket className='w-7 h-7' />
+                    </div>
+                    <h3 className='font-bold text-lg'>No Bookings Found</h3>
+                    <p className='text-xs opacity-60'>
+                        You haven't reserved any tickets yet. Explore upcoming
+                        concerts and workshops!
                     </p>
-                </div>
-            ) : isError ? (
-                <div className='alert alert-error rounded-2xl shadow-lg'>
-                    <AlertCircle className='w-5 h-5' />
-                    <span>Failed to retrieve bookings. Please try again.</span>
-                    <button
-                        onClick={refetch}
-                        className='btn btn-xs btn-outline'
-                    >
-                        Retry
-                    </button>
-                </div>
-            ) : bookings.length === 0 ? (
-                <div className='text-center py-16 px-4 bg-base-100 rounded-3xl border border-base-content/10 shadow-sm space-y-4'>
-                    <div className='w-16 h-16 rounded-2xl bg-base-200 text-base-content/40 flex items-center justify-center mx-auto'>
-                        <Ticket className='w-8 h-8' />
-                    </div>
-                    <div className='space-y-1 max-w-sm mx-auto'>
-                        <h3 className='text-lg font-bold'>
-                            No tickets booked yet
-                        </h3>
-                        <p className='text-xs text-base-content/60'>
-                            Explore upcoming performances, concerts, and
-                            masterclasses to reserve your passes.
-                        </p>
-                    </div>
                     <Link
                         to='/events'
                         className='btn btn-primary btn-sm rounded-xl px-5'
                     >
-                        Explore Events
+                        Browse Events
                     </Link>
                 </div>
             ) : (
-                <div className='grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6'>
+                <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                     {bookings.map((b) => {
-                        const evt = b.event
-                        const isPassAvailable =
+                        // Strict rule: Entry Pass unlocks only when paid, confirmed, and dispatched or received
+                        const isPassAccessible =
                             b.paymentStatus === 'paid' &&
                             b.bookingStatus === 'confirmed' &&
-                            b.entryPassToken
+                            (b.despatchStatus === 'dispatched' ||
+                                b.despatchStatus === 'received')
+
+                        // Eligible for refund if paid, confirmed, but not yet dispatched
+                        const canRequestRefund =
+                            b.paymentStatus === 'paid' &&
+                            b.bookingStatus === 'confirmed' &&
+                            b.despatchStatus === 'not_dispatched'
 
                         return (
                             <div
                                 key={b._id}
-                                className='card bg-base-100 border border-base-content/10 shadow-md hover:shadow-xl transition-all duration-200 rounded-3xl overflow-hidden flex flex-col justify-between'
+                                className='card bg-base-100 border border-base-content/10 shadow-sm rounded-3xl p-5 space-y-4 hover:border-base-content/20 transition-all'
                             >
-                                <div className='p-5 sm:p-6 space-y-4'>
-                                    {/* Top Metadata */}
-                                    <div className='flex items-center justify-between gap-2'>
-                                        <div className='flex items-center gap-2 flex-wrap'>
-                                            {getStatusBadge(b)}
-                                            {getDispatchBadge(b.despatchStatus)}
+                                <div className='flex items-start justify-between gap-3'>
+                                    <div>
+                                        <h3 className='font-bold text-base text-base-content line-clamp-1'>
+                                            {b.event?.title || 'Event Booking'}
+                                        </h3>
+                                        <div className='text-xs text-base-content/60 flex items-center gap-1 mt-0.5'>
+                                            <MapPin className='w-3.5 h-3.5 text-primary' />
+                                            <span>
+                                                {b.event?.venueId?.name} (
+                                                {b.event?.venueId?.city})
+                                            </span>
                                         </div>
-                                        <span className='font-mono text-[11px] text-base-content/50 uppercase'>
-                                            #{b._id.slice(-6)}
+                                    </div>
+                                    <span className='font-mono font-black text-primary text-sm'>
+                                        ₹{b.totalAmount}
+                                    </span>
+                                </div>
+
+                                <div className='grid grid-cols-3 gap-2 bg-base-200/50 p-3 rounded-2xl text-center text-xs'>
+                                    <div>
+                                        <span className='text-[10px] uppercase font-bold opacity-50 block'>
+                                            Tier
+                                        </span>
+                                        <span className='font-bold truncate block'>
+                                            {b.tierName}
                                         </span>
                                     </div>
-
-                                    {/* Event Title */}
                                     <div>
-                                        <h2 className='text-lg sm:text-xl font-black text-base-content line-clamp-1'>
-                                            {evt?.title ||
-                                                'Private / Closed Event'}
-                                        </h2>
-                                        {evt?.startDate && (
-                                            <p className='flex items-center gap-1.5 text-xs text-base-content/70 mt-1 font-medium'>
-                                                <Calendar className='w-3.5 h-3.5 text-primary shrink-0' />
-                                                {new Date(
-                                                    evt.startDate,
-                                                ).toLocaleDateString('en-IN', {
-                                                    weekday: 'short',
-                                                    day: 'numeric',
-                                                    month: 'short',
-                                                    year: 'numeric',
-                                                })}
-                                            </p>
-                                        )}
+                                        <span className='text-[10px] uppercase font-bold opacity-50 block'>
+                                            Qty
+                                        </span>
+                                        <span className='font-bold block'>
+                                            {b.bookedQty}
+                                        </span>
                                     </div>
-
-                                    {/* Ticket Specifications */}
-                                    <div className='bg-base-200/60 rounded-2xl p-3.5 grid grid-cols-2 gap-2 text-xs'>
-                                        <div>
-                                            <span className='text-[10px] text-base-content/60 uppercase font-bold tracking-wider block'>
-                                                Tier
-                                            </span>
-                                            <span className='font-bold text-base-content truncate block'>
-                                                {b.tierName}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <span className='text-[10px] text-base-content/60 uppercase font-bold tracking-wider block'>
-                                                Passes Reserved
-                                            </span>
-                                            <span className='font-bold text-base-content block'>
-                                                {b.bookedQty}{' '}
-                                                {b.bookedQty > 1
-                                                    ? 'Tickets'
-                                                    : 'Ticket'}
-                                            </span>
-                                        </div>
-                                        <div className='col-span-2 pt-2 border-t border-base-content/5 flex items-center justify-between'>
-                                            <span className='text-[11px] text-base-content/60 font-semibold'>
-                                                Total Paid
-                                            </span>
-                                            <span className='font-mono font-extrabold text-sm text-primary'>
-                                                ₹
-                                                {b.totalAmount.toLocaleString(
-                                                    'en-IN',
-                                                )}
-                                            </span>
-                                        </div>
+                                    <div>
+                                        <span className='text-[10px] uppercase font-bold opacity-50 block'>
+                                            Payment
+                                        </span>
+                                        <span
+                                            className={`badge badge-xs font-bold ${
+                                                b.paymentStatus === 'paid'
+                                                    ? 'badge-success'
+                                                    : b.paymentStatus ===
+                                                        'pending_verification'
+                                                      ? 'badge-info'
+                                                      : b.paymentStatus ===
+                                                          'not_paid'
+                                                        ? 'badge-warning'
+                                                        : 'badge-error'
+                                            }`}
+                                        >
+                                            {b.paymentStatus}
+                                        </span>
                                     </div>
+                                </div>
 
-                                    {/* Entry Pass Verification Status */}
-                                    {b.isCheckedIn && (
-                                        <div className='flex items-center gap-2 p-2.5 rounded-xl bg-info/10 text-info text-xs font-semibold'>
-                                            <CheckCircle2 className='w-4 h-4 shrink-0' />
-                                            <span>
-                                                Admitted at Gate (
-                                                {new Date(
-                                                    b.checkInTimestamp,
-                                                ).toLocaleTimeString('en-IN', {
-                                                    timeZone: 'Asia/Kolkata',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit',
-                                                })}
-                                                )
-                                            </span>
-                                        </div>
-                                    )}
+                                {/* Status Indicators */}
+                                <div className='space-y-1.5 text-xs'>
+                                    <div className='flex items-center justify-between text-[11px] opacity-70'>
+                                        <span>Booking State:</span>
+                                        <span className='font-bold uppercase tracking-wider'>
+                                            {b.bookingStatus}
+                                        </span>
+                                    </div>
+                                    <div className='flex items-center justify-between text-[11px] opacity-70'>
+                                        <span>Dispatch State:</span>
+                                        <span className='font-bold capitalize flex items-center gap-1'>
+                                            <Truck className='w-3 h-3' />{' '}
+                                            {b.despatchStatus}
+                                        </span>
+                                    </div>
                                 </div>
 
                                 {/* Action Buttons */}
-                                <div className='px-5 pb-5 pt-2 border-t border-base-content/5 bg-base-100 flex items-center justify-between gap-3'>
-                                    {isPassAvailable ? (
+                                <div className='pt-2 border-t border-base-content/10 flex flex-wrap items-center justify-between gap-2'>
+                                    {/* Unpaid Booking: Enter Offline Payment Proof */}
+                                    {b.paymentStatus === 'not_paid' && (
                                         <button
                                             onClick={() =>
-                                                setActivePassId(b._id)
+                                                setPaymentModalBooking(b)
                                             }
-                                            className='btn btn-primary btn-sm rounded-xl gap-2 w-full font-bold shadow-sm'
+                                            className='btn btn-sm btn-primary rounded-xl font-bold gap-1.5 flex-1'
                                         >
-                                            <QrCode className='w-4 h-4' /> View
-                                            QR Entry Pass
+                                            <CreditCard className='w-4 h-4' />{' '}
+                                            Submit Payment Proof
                                         </button>
-                                    ) : (
-                                        <div className='text-xs text-base-content/60 italic py-1'>
-                                            Pass generation pending payment
-                                            confirmation
+                                    )}
+
+                                    {/* Awaiting Admin Approval */}
+                                    {b.paymentStatus ===
+                                        'pending_verification' && (
+                                        <div className='flex items-center gap-1.5 text-[11px] text-info bg-info/10 px-3 py-2 rounded-xl flex-1'>
+                                            <Clock className='w-3.5 h-3.5 shrink-0' />
+                                            <span>
+                                                Verification in progress (Ref:{' '}
+                                                {b.paymentDetails?.trxnId})
+                                            </span>
                                         </div>
+                                    )}
+
+                                    {/* Paid: Entry Pass Accessible vs Locked pending dispatch */}
+                                    {b.paymentStatus === 'paid' &&
+                                        (isPassAccessible ? (
+                                            <button
+                                                onClick={() =>
+                                                    setSelectedBookingForQr(
+                                                        b._id,
+                                                    )
+                                                }
+                                                className='btn btn-sm btn-primary rounded-xl font-bold gap-1.5 flex-1'
+                                            >
+                                                <QrCode className='w-4 h-4' />{' '}
+                                                View QR Pass
+                                            </button>
+                                        ) : (
+                                            <div className='flex items-center gap-1.5 text-[11px] text-base-content/60 bg-base-200 px-3 py-2 rounded-xl flex-1'>
+                                                <Lock className='w-3.5 h-3.5 shrink-0' />
+                                                <span>
+                                                    Pass unlocks once physical
+                                                    tickets are dispatched
+                                                </span>
+                                            </div>
+                                        ))}
+
+                                    {/* Refund Action */}
+                                    {canRequestRefund && (
+                                        <button
+                                            onClick={() =>
+                                                setRefundModalBooking(b)
+                                            }
+                                            className='btn btn-sm btn-ghost text-error hover:bg-error/10 rounded-xl gap-1'
+                                        >
+                                            <RotateCcw className='w-3.5 h-3.5' />{' '}
+                                            Cancel
+                                        </button>
                                     )}
                                 </div>
                             </div>
@@ -279,169 +369,150 @@ const MyBookingsScreen = () => {
                 </div>
             )}
 
-            {/* ================= DIGITAL TICKET & PRINT MODAL ================= */}
-            {activePassId && (
-                <div className='fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150'>
-                    <div className='bg-base-100 rounded-3xl max-w-md w-full border border-base-content/15 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]'>
-                        {/* Modal Header */}
-                        <div className='p-4 border-b border-base-content/10 flex items-center justify-between no-print'>
-                            <div className='flex items-center gap-2'>
-                                <Ticket className='w-5 h-5 text-primary' />
-                                <h3 className='font-bold text-sm text-base-content'>
-                                    Digital Admission Pass
-                                </h3>
-                            </div>
-                            <button
-                                onClick={() => setActivePassId(null)}
-                                className='btn btn-circle btn-ghost btn-xs'
-                                aria-label='Close modal'
-                            >
-                                <X className='w-4 h-4' />
-                            </button>
-                        </div>
+            {/* View QR Code Modal */}
+            {selectedBookingForQr && (
+                <QrModal
+                    bookingId={selectedBookingForQr}
+                    onClose={() => setSelectedBookingForQr(null)}
+                />
+            )}
 
-                        {/* Modal Body */}
-                        <div
-                            className='p-6 overflow-y-auto space-y-6'
-                            id='printable-ticket'
+            {/* Attendee Offline Payment Submission Modal */}
+            {paymentModalBooking && (
+                <div className='modal modal-open bg-black/60 backdrop-blur-sm z-50'>
+                    <div className='modal-box rounded-3xl max-w-sm p-6 space-y-4'>
+                        <h3 className='font-bold text-base text-base-content'>
+                            Submit Payment Proof
+                        </h3>
+                        <p className='text-xs opacity-70'>
+                            Event:{' '}
+                            <span className='font-bold'>
+                                {paymentModalBooking.event?.title}
+                            </span>
+                            <br />
+                            Total Amount:{' '}
+                            <span className='font-bold text-primary font-mono'>
+                                ₹{paymentModalBooking.totalAmount}
+                            </span>
+                        </p>
+
+                        <form
+                            onSubmit={handlePaymentSubmit}
+                            className='space-y-3 pt-1'
                         >
-                            {isPassLoading ? (
-                                <div className='py-16 text-center space-y-3'>
-                                    <span className='loading loading-spinner loading-md text-primary'></span>
-                                    <p className='text-xs text-base-content/60'>
-                                        Rendering authenticated dynamic QR
-                                        code...
-                                    </p>
-                                </div>
-                            ) : isPassError || !passData ? (
-                                <div className='alert alert-error text-xs rounded-xl'>
-                                    <AlertCircle className='w-4 h-4' />
-                                    <span>
-                                        Failed to load gate pass details.
-                                    </span>
-                                </div>
-                            ) : (
-                                <div className='space-y-5'>
-                                    {/* Ticket Card Wrapper */}
-                                    <div className='bg-gradient-to-b from-base-200/90 to-base-200/40 border border-base-content/15 rounded-3xl p-6 text-center relative overflow-hidden shadow-inner'>
-                                        {/* Top Notch Circles */}
-                                        <div className='absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-base-100 border-r border-base-content/15'></div>
-                                        <div className='absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-base-100 border-l border-base-content/15'></div>
+                            <div>
+                                <label className='text-[11px] font-bold block mb-1'>
+                                    Payment Method
+                                </label>
+                                <select
+                                    value={payMode}
+                                    onChange={(e) => setPayMode(e.target.value)}
+                                    className='select select-sm select-bordered w-full rounded-xl text-xs'
+                                >
+                                    <option value='upi'>
+                                        UPI (GPay / PhonePe / Paytm / BHIM)
+                                    </option>
+                                    <option value='bank_transfer'>
+                                        Bank Transfer (IMPS / NEFT / RTGS)
+                                    </option>
+                                    <option value='cash'>
+                                        Direct Cash at Venue Counter
+                                    </option>
+                                </select>
+                            </div>
 
-                                        {/* Event Header */}
-                                        <span className='badge badge-primary badge-sm font-bold uppercase tracking-wider mb-2'>
-                                            Official Admission Pass
-                                        </span>
-                                        <h2 className='text-xl font-black text-base-content leading-tight'>
-                                            {passData.event?.title}
-                                        </h2>
-                                        <p className='text-xs text-base-content/70 mt-1 flex items-center justify-center gap-1.5'>
-                                            <MapPin className='w-3.5 h-3.5 text-primary' />
-                                            {passData.event?.venue},{' '}
-                                            {passData.event?.city}
-                                        </p>
+                            <div>
+                                <label className='text-[11px] font-bold block mb-1'>
+                                    Transaction / UTR Reference ID
+                                </label>
+                                <input
+                                    type='text'
+                                    required
+                                    placeholder='e.g. 428901849204 or UTR number'
+                                    value={payTrxnId}
+                                    onChange={(e) =>
+                                        setPayTrxnId(e.target.value)
+                                    }
+                                    className='input input-sm input-bordered w-full rounded-xl font-mono text-xs'
+                                />
+                            </div>
 
-                                        {/* Base64 High-Resolution QR */}
-                                        <div className='my-5 p-3.5 bg-white rounded-2xl w-fit mx-auto shadow-md border-2 border-primary/20'>
-                                            <img
-                                                src={passData.qrCode}
-                                                alt='Entry Pass QR Code'
-                                                className='w-48 h-48 sm:w-52 sm:h-52 object-contain mx-auto block'
-                                            />
-                                        </div>
-
-                                        {/* Token String for Gatekeeper Manual Fallback */}
-                                        <div className='space-y-1'>
-                                            <span className='text-[10px] text-base-content/50 uppercase font-mono tracking-wider'>
-                                                Verification Pass Token
-                                            </span>
-                                            <p className='font-mono font-bold text-xs tracking-wider text-primary break-all px-2'>
-                                                {passData.entryPassToken}
-                                            </p>
-                                        </div>
-
-                                        {/* Attendee Snapshot */}
-                                        <div className='mt-5 pt-4 border-t border-dashed border-base-content/20 grid grid-cols-2 gap-2 text-left text-xs'>
-                                            <div>
-                                                <span className='text-[10px] text-base-content/50 uppercase font-bold tracking-wider block'>
-                                                    Attendee
-                                                </span>
-                                                <span className='font-bold text-base-content truncate block'>
-                                                    {passData.attendee?.name}
-                                                </span>
-                                            </div>
-                                            <div className='text-right'>
-                                                <span className='text-[10px] text-base-content/50 uppercase font-bold tracking-wider block'>
-                                                    Tier & Qty
-                                                </span>
-                                                <span className='font-bold text-base-content block'>
-                                                    {
-                                                        passData.attendee
-                                                            ?.tierName
-                                                    }{' '}
-                                                    ×{' '}
-                                                    {
-                                                        passData.attendee
-                                                            ?.bookedQty
-                                                    }
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Gate Instructions */}
-                                    <p className='text-[11px] text-base-content/60 text-center leading-relaxed no-print'>
-                                        Present this digital screen or a
-                                        physical paper printout at the security
-                                        turnstiles. Equipped with anti-passback
-                                        authentication; multiple entries using
-                                        the same pass will trigger gate alerts.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Modal Action Bar */}
-                        <div className='p-4 bg-base-200/50 border-t border-base-content/10 flex items-center justify-end gap-2 no-print'>
-                            <button
-                                onClick={handlePrint}
-                                disabled={!passData}
-                                className='btn btn-primary btn-sm rounded-xl gap-2 font-bold shadow-sm'
-                            >
-                                <Printer className='w-4 h-4' /> Print / Save
-                                Ticket
-                            </button>
-                        </div>
+                            <div className='modal-action pt-2'>
+                                <button
+                                    type='button'
+                                    onClick={() => setPaymentModalBooking(null)}
+                                    className='btn btn-sm btn-ghost rounded-xl'
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type='submit'
+                                    disabled={isSubmittingPay}
+                                    className='btn btn-sm btn-primary rounded-xl font-bold gap-1'
+                                >
+                                    {isSubmittingPay ? (
+                                        <>
+                                            <Loader2 className='w-3.5 h-3.5 animate-spin' />
+                                            Submitting...
+                                        </>
+                                    ) : (
+                                        'Submit Details'
+                                    )}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
 
-            {/* Print CSS Rules */}
-            <style role='style'>{`
-                @media print {
-                    body * {
-                        visibility: hidden !important;
-                    }
-                    #printable-ticket,
-                    #printable-ticket * {
-                        visibility: visible !important;
-                    }
-                    #printable-ticket {
-                        position: fixed !important;
-                        left: 0 !important;
-                        top: 0 !important;
-                        width: 100vw !important;
-                        height: auto !important;
-                        padding: 24px !important;
-                        margin: 0 !important;
-                        background: #ffffff !important;
-                        color: #000000 !important;
-                    }
-                    .no-print {
-                        display: none !important;
-                    }
-                }
-            `}</style>
+            {/* Request Refund Modal */}
+            {refundModalBooking && (
+                <div className='modal modal-open bg-black/60 z-50'>
+                    <div className='modal-box rounded-3xl max-w-sm p-6 space-y-4'>
+                        <h3 className='font-bold text-base text-base-content'>
+                            Request Cancellation & Refund
+                        </h3>
+                        <p className='text-xs opacity-70'>
+                            Booking:{' '}
+                            <span className='font-bold'>
+                                {refundModalBooking.event?.title}
+                            </span>{' '}
+                            (₹{refundModalBooking.totalAmount})
+                        </p>
+
+                        <form
+                            onSubmit={handleRefundSubmit}
+                            className='space-y-3'
+                        >
+                            <textarea
+                                required
+                                value={cancellationReason}
+                                onChange={(e) =>
+                                    setCancellationReason(e.target.value)
+                                }
+                                placeholder='State your reason for cancellation...'
+                                className='textarea textarea-bordered w-full text-xs rounded-xl h-24'
+                            />
+                            <div className='modal-action pt-2'>
+                                <button
+                                    type='button'
+                                    onClick={() => setRefundModalBooking(null)}
+                                    className='btn btn-sm btn-ghost rounded-xl'
+                                >
+                                    Dismiss
+                                </button>
+                                <button
+                                    type='submit'
+                                    disabled={isRefunding}
+                                    className='btn btn-sm btn-error text-white rounded-xl'
+                                >
+                                    Submit Request
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
