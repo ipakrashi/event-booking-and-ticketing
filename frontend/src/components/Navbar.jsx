@@ -33,6 +33,7 @@ import {
     ScanLine,
     CreditCard,
     Shield,
+    Tag,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -481,6 +482,15 @@ const Navbar = () => {
                                         </li>
                                         <li>
                                             <Link
+                                                to='/admin/categories'
+                                                className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                            >
+                                                <Tag className='w-4 h-4 text-primary' />{' '}
+                                                Category Management
+                                            </Link>
+                                        </li>
+                                        <li>
+                                            <Link
                                                 to='/admin/bookings'
                                                 className='flex items-center gap-2 text-sm rounded-lg font-medium'
                                             >
@@ -575,6 +585,24 @@ const Navbar = () => {
                         {/* High-Priority Staff Scanner for Mobile Camera */}
                         {isStaffOrAdmin && (
                             <div className='p-2.5 rounded-xl bg-primary/10 border border-primary/20 space-y-2'>
+                                <li>
+                                    <Link
+                                        to='/admin/roles'
+                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                    >
+                                        <Shield className='w-4 h-4 text-primary' />{' '}
+                                        Role Management
+                                    </Link>
+                                </li>
+                                <li>
+                                    <Link
+                                        to='/admin/categories'
+                                        className='flex items-center gap-2 text-sm rounded-lg font-medium'
+                                    >
+                                        <Tag className='w-4 h-4 text-primary' />{' '}
+                                        Category Management
+                                    </Link>
+                                </li>
                                 <span className='text-[10px] font-black uppercase tracking-wider text-primary block'>
                                     Staff Handheld Tool
                                 </span>
