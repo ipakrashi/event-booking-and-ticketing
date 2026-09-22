@@ -7,6 +7,7 @@ import Login from './pages/Login'
 import Home from './pages/Home'
 import EventsCatalog from './pages/EventsCatalog'
 import EventDetails from './pages/EventDetails'
+import GatekeeperScanScreen from './pages/GatekeeperScanScreen'
 
 const App = () => {
     return (
@@ -18,6 +19,10 @@ const App = () => {
                     <Route path='/events' element={<EventsCatalog />} />
                     <Route path='/events/:id' element={<EventDetails />} />
                     <Route path='/login' element={<Login />} />
+                    <Route
+                        path='/gatekeeper'
+                        element={<GatekeeperScanScreen />}
+                    />
                 </Routes>
             </main>
             <Footer />

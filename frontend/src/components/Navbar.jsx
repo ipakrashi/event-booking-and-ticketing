@@ -30,6 +30,7 @@ import {
     MapPin,
     Building2,
     Star,
+    ScanLine,
 } from 'lucide-react'
 
 const Navbar = () => {
@@ -68,7 +69,16 @@ const Navbar = () => {
         ),
     )
 
-    // Auto-close drawer on location / route change
+    // Role detection
+    const roleName = (
+        userInfo?.role?.role ||
+        userInfo?.role ||
+        ''
+    ).toLowerCase()
+
+    const isStaffOrAdmin = roleName === 'admin' || roleName === 'organizer'
+
+    // Auto-close drawer on route change
     useEffect(() => {
         setMobileMenuOpen(false)
     }, [location.pathname])
@@ -158,12 +168,6 @@ const Navbar = () => {
             navigate('/')
         }
     }
-
-    const roleName = (
-        userInfo?.role?.role ||
-        userInfo?.role ||
-        ''
-    ).toLowerCase()
 
     return (
         <header className='sticky top-0 z-50 bg-base-100 border-b border-base-content/10 shadow-sm transition-colors duration-200'>
@@ -429,7 +433,7 @@ const Navbar = () => {
 
                             <ul
                                 tabIndex={0}
-                                className='dropdown-content z-50 menu p-2 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl w-60 mt-2'
+                                className='dropdown-content z-50 menu p-2 shadow-2xl bg-base-100 border border-base-content/15 rounded-2xl w-64 mt-2'
                             >
                                 <li className='menu-title text-[11px] text-base-content/60 font-semibold px-3 py-1 uppercase tracking-wider'>
                                     Attendee Console
@@ -453,11 +457,24 @@ const Navbar = () => {
                                     </Link>
                                 </li>
 
-                                {roleName === 'admin' && (
+                                {/* Staff & Administration Menu */}
+                                {isStaffOrAdmin && (
                                     <>
                                         <div className='divider my-1 border-base-content/10'></div>
-                                        <li className='menu-title text-[11px] text-primary font-bold px-3 py-1 uppercase tracking-wider'>
-                                            Administration
+                                        <li className='menu-title text-[11px] text-primary font-bold px-3 py-1 uppercase tracking-wider flex items-center justify-between'>
+                                            <span>Staff Operations</span>
+                                            <span className='badge badge-primary badge-xs uppercase font-mono'>
+                                                {roleName}
+                                            </span>
+                                        </li>
+                                        <li>
+                                            <Link
+                                                to='/gatekeeper'
+                                                className='flex items-center gap-2 text-sm rounded-lg text-primary font-semibold bg-primary/10 hover:bg-primary/20'
+                                            >
+                                                <ScanLine className='w-4 h-4 text-primary' />{' '}
+                                                Gatekeeper Scanner
+                                            </Link>
                                         </li>
                                         <li>
                                             <Link
@@ -506,7 +523,7 @@ const Navbar = () => {
             {mobileMenuOpen && (
                 <div className='lg:hidden fixed inset-x-0 top-16 bottom-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col justify-start animate-in fade-in duration-150'>
                     <div className='bg-base-100 border-b border-base-content/15 p-4 space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl'>
-                        {/* Mobile Search Bar inside the Drawer */}
+                        {/* Mobile Search Bar */}
                         <form
                             onSubmit={handleSearchSubmit}
                             className='relative flex items-center'
@@ -535,7 +552,38 @@ const Navbar = () => {
                             </button>
                         </form>
 
-                        {/* Quick Links */}
+                        {/* High-Priority Staff Scanner for Mobile Camera */}
+                        {isStaffOrAdmin && (
+                            <div className='p-2.5 rounded-xl bg-primary/10 border border-primary/20 space-y-2'>
+                                <span className='text-[10px] font-black uppercase tracking-wider text-primary block'>
+                                    Staff Handheld Tool
+                                </span>
+                                <Link
+                                    to='/gatekeeper'
+                                    onClick={() => setMobileMenuOpen(false)}
+                                    className='flex items-center gap-2.5 px-3 py-2 rounded-lg bg-primary text-primary-content font-bold text-xs shadow-md shadow-primary/30 transition-transform active:scale-95'
+                                >
+                                    <ScanLine className='w-4 h-4' />
+                                    <span>Launch QR Camera Scanner</span>
+                                </Link>
+                            </div>
+                        )}
+
+                        {/* Attendee QR Passes for Quick Mobile Check-in */}
+                        {userInfo && (
+                            <div className='space-y-1 border-b border-base-content/10 pb-3'>
+                                <Link
+                                    to='/my-bookings'
+                                    onClick={() => setMobileMenuOpen(false)}
+                                    className='flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-base-200 font-semibold text-sm text-primary'
+                                >
+                                    <Ticket className='w-4 h-4' /> My Tickets &
+                                    QR Passes
+                                </Link>
+                            </div>
+                        )}
+
+                        {/* Quick Browsing Links */}
                         <div className='space-y-1 border-b border-base-content/10 pb-3'>
                             <Link
                                 to='/events?sort=highestRated'
