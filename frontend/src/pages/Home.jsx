@@ -67,7 +67,9 @@ const Home = () => {
     SECTION 1: HERO SLIDER (DYNAMIC BANNER CAROUSEL)
     ========================================================= */}
             <section className='max-w-7xl mx-auto px-4 sm:px-6 pt-6'>
-                <HeroSlider banners={banners} />
+                <div className='max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-12'>
+                    <HeroSlider banners={banners} />
+                </div>
             </section>
 
             {/* =========================================================

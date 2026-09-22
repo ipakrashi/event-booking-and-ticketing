@@ -172,14 +172,14 @@ const Navbar = () => {
     ).toLowerCase()
 
     return (
-        <header className='sticky top-0 z-50 bg-base-100/95 backdrop-blur-md border-b border-base-content/10 shadow-sm transition-colors duration-200'>
+        <header className='sticky top-0 z-100 bg-base-100/95 backdrop-blur-md border-b border-base-content/10 shadow-sm'>
             <div className='max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-3'>
                 {/* ================= LEFT: HAMBURGER & LOGO ================= */}
                 <div className='flex items-center gap-2 sm:gap-3'>
                     <div className='flex items-center lg:hidden'>
                         <button
-                            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                            className='btn btn-ghost btn-sm btn-square'
+                            onClick={() => setMobileMenuOpen((prev) => !prev)}
+                            className='btn btn-ghost btn-sm btn-square lg:hidden'
                             aria-label='Toggle Navigation Menu'
                         >
                             {mobileMenuOpen ? (
