@@ -71,6 +71,23 @@ export const bookingsApiSlice = apiSlice.injectEndpoints({
             }),
             invalidatesTags: ['Booking'],
         }),
+        // Dispatch & Shipping Endpoints
+        updateDispatchStatus: builder.mutation({
+            query: ({ id, courierName, podId }) => ({
+                url: `/api/bookings/${id}/dispatch`,
+                method: 'PUT',
+                body: {
+                    despatchDetails: { courierName, podId },
+                },
+            }),
+            invalidatesTags: ['Booking'],
+        }),
+        getShippingLabel: builder.query({
+            query: (id) => `/api/bookings/${id}/shipping-label`,
+            providesTags: (result, error, id) => [
+                { type: 'ShippingLabel', id },
+            ],
+        }),
     }),
 })
 
@@ -85,4 +102,6 @@ export const {
     useProcessRefundMutation,
     useGetEntryPassQuery,
     useVerifyGateEntryMutation,
+    useUpdateDispatchStatusMutation,
+    useGetShippingLabelQuery,
 } = bookingsApiSlice
