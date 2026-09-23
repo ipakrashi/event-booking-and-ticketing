@@ -595,7 +595,25 @@ const AdminBookingsScreen = () => {
                             </thead>
                             <tbody className='divide-y divide-base-content/5'>
                                 {filteredBookings.map((b) => {
+                                    const isTerminal =
+                                        [
+                                            'refund_issued',
+                                            'refunded',
+                                            'cancelled',
+                                            'rejected',
+                                        ].includes(b.bookingStatus) ||
+                                        b.paymentStatus === 'refunded'
+
+                                    const canApproveOffline =
+                                        !isTerminal &&
+                                        b.paymentStatus !== 'paid' &&
+                                        (b.paymentStatus ===
+                                            'pending_verification' ||
+                                            b.paymentStatus === 'not_paid') &&
+                                        b.bookingStatus !== 'refund_requested'
+
                                     const canDispatch =
+                                        !isTerminal &&
                                         b.paymentStatus === 'paid' &&
                                         b.bookingStatus === 'confirmed' &&
                                         b.despatchStatus === 'not_dispatched'
@@ -746,26 +764,27 @@ const AdminBookingsScreen = () => {
                                             </td>
 
                                             <td className='text-right pr-4 space-x-1.5 whitespace-nowrap'>
+                                                {/* Terminal State Badge */}
+                                                {isTerminal && (
+                                                    <span className='badge badge-ghost badge-xs font-mono opacity-50'>
+                                                        Settled / Closed
+                                                    </span>
+                                                )}
+
                                                 {/* Approve Offline Payment */}
-                                                {b.paymentStatus !== 'paid' &&
-                                                    b.bookingStatus !==
-                                                        'cancelled' && (
-                                                        <button
-                                                            onClick={() =>
-                                                                handleApprove(
-                                                                    b._id,
-                                                                )
-                                                            }
-                                                            disabled={
-                                                                isApproving
-                                                            }
-                                                            className='btn btn-xs btn-primary rounded-xl font-bold gap-1 shadow-sm'
-                                                            title='Confirm payment and activate QR pass token'
-                                                        >
-                                                            <Check className='w-3 h-3' />{' '}
-                                                            Approve Pay
-                                                        </button>
-                                                    )}
+                                                {canApproveOffline && (
+                                                    <button
+                                                        onClick={() =>
+                                                            handleApprove(b._id)
+                                                        }
+                                                        disabled={isApproving}
+                                                        className='btn btn-xs btn-primary rounded-xl font-bold gap-1 shadow-sm'
+                                                        title='Confirm payment and activate QR pass token'
+                                                    >
+                                                        <Check className='w-3 h-3' />{' '}
+                                                        Approve Pay
+                                                    </button>
+                                                )}
 
                                                 {/* Courier Dispatch Action */}
                                                 {canDispatch && (
@@ -846,7 +865,24 @@ const AdminBookingsScreen = () => {
                     {/* 2. MOBILE & TABLET CARD VIEW */}
                     <div className='grid grid-cols-1 md:grid-cols-2 gap-4 lg:hidden'>
                         {filteredBookings.map((b) => {
+                            const isTerminal =
+                                [
+                                    'refund_issued',
+                                    'refunded',
+                                    'cancelled',
+                                    'rejected',
+                                ].includes(b.bookingStatus) ||
+                                b.paymentStatus === 'refunded'
+
+                            const canApproveOffline =
+                                !isTerminal &&
+                                b.paymentStatus !== 'paid' &&
+                                (b.paymentStatus === 'pending_verification' ||
+                                    b.paymentStatus === 'not_paid') &&
+                                b.bookingStatus !== 'refund_requested'
+
                             const canDispatch =
+                                !isTerminal &&
                                 b.paymentStatus === 'paid' &&
                                 b.bookingStatus === 'confirmed' &&
                                 b.despatchStatus === 'not_dispatched'
@@ -941,31 +977,28 @@ const AdminBookingsScreen = () => {
                                                 )}
                                             </span>
                                         </div>
-
-                                        {b.despatchDetails?.podId && (
-                                            <div className='text-[10px] font-mono opacity-70 truncate'>
-                                                Courier:{' '}
-                                                {b.despatchDetails.courierName}{' '}
-                                                (POD: {b.despatchDetails.podId})
-                                            </div>
-                                        )}
                                     </div>
 
                                     {/* Action Buttons */}
                                     <div className='pt-2 border-t border-base-content/10 flex flex-wrap items-center justify-end gap-2'>
-                                        {b.paymentStatus !== 'paid' &&
-                                            b.bookingStatus !== 'cancelled' && (
-                                                <button
-                                                    onClick={() =>
-                                                        handleApprove(b._id)
-                                                    }
-                                                    disabled={isApproving}
-                                                    className='btn btn-xs btn-primary rounded-xl font-bold gap-1 shadow-sm flex-1'
-                                                >
-                                                    <Check className='w-3 h-3' />{' '}
-                                                    Approve Pay
-                                                </button>
-                                            )}
+                                        {isTerminal && (
+                                            <span className='badge badge-ghost badge-xs font-mono opacity-50'>
+                                                Settled / Closed
+                                            </span>
+                                        )}
+
+                                        {canApproveOffline && (
+                                            <button
+                                                onClick={() =>
+                                                    handleApprove(b._id)
+                                                }
+                                                disabled={isApproving}
+                                                className='btn btn-xs btn-primary rounded-xl font-bold gap-1 shadow-sm flex-1'
+                                            >
+                                                <Check className='w-3 h-3' />{' '}
+                                                Approve Pay
+                                            </button>
+                                        )}
 
                                         {canDispatch && (
                                             <button
