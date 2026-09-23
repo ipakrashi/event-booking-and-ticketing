@@ -9,7 +9,11 @@ import {
     useCreateEventReviewMutation,
     useGetMyReviewStatusQuery,
 } from '../redux/api/eventsApiSlice'
-import { useCreateBookingMutation } from '../redux/api/bookingsApiSlice'
+import {
+    useCreateBookingMutation,
+    useCreateRazorpayOrderMutation,
+    useVerifyRazorpayPaymentMutation,
+} from '../redux/api/bookingsApiSlice'
 
 import {
     MapPin,
@@ -30,6 +34,7 @@ import {
     AlertCircle,
     CheckCircle2,
     QrCode,
+    CreditCard,
 } from 'lucide-react'
 
 const EventDetails = () => {
@@ -59,6 +64,12 @@ const EventDetails = () => {
     const [bookingSuccessModal, setBookingSuccessModal] = useState(false)
     const [confirmedBookingData, setConfirmedBookingData] = useState(null)
 
+    // Razorpay Integration Hooks
+    const [createRazorpayOrder, { isLoading: isCreatingOrder }] =
+        useCreateRazorpayOrderMutation()
+    const [verifyRazorpayPayment, { isLoading: isVerifyingPayment }] =
+        useVerifyRazorpayPaymentMutation()
+
     const handleQuantityChange = (tierId, delta, maxAvailable) => {
         setSelectedQuantities((prev) => {
             const current = prev[tierId] || 0
@@ -66,8 +77,10 @@ const EventDetails = () => {
             return { ...prev, [tierId]: next }
         })
     }
-    const { data: myReviewStatusData, isLoading: loadingReviewStatus } =
-        useGetMyReviewStatusQuery(id, { skip: !userInfo })
+
+    const { data: myReviewStatusData } = useGetMyReviewStatusQuery(id, {
+        skip: !userInfo,
+    })
     const myReviewStatus = myReviewStatusData || {}
 
     const handleReviewSubmit = async (e) => {
@@ -96,6 +109,156 @@ const EventDetails = () => {
                     err?.error ||
                     'Failed to submit review. Please try again.',
             )
+        }
+    }
+
+    // Helper: Dynamically load Razorpay SDK
+    const loadRazorpayScript = () => {
+        return new Promise((resolve) => {
+            if (window.Razorpay) {
+                resolve(true)
+                return
+            }
+            const script = document.createElement('script')
+            script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+            script.onload = () => resolve(true)
+            script.onerror = () => resolve(false)
+            document.body.appendChild(script)
+        })
+    }
+
+    const handleProceedToCheckout = async () => {
+        setBookingError(null)
+
+        if (!userInfo) {
+            navigate('/login')
+            return
+        }
+
+        const selectedTiersPayload = Object.entries(selectedQuantities)
+            .filter(([_, qty]) => qty > 0)
+            .map(([tierId, quantity]) => {
+                const tier = event.ticketTiers.find((t) => t._id === tierId)
+                return {
+                    tierId,
+                    name: tier.name,
+                    unitPrice: tier.price,
+                    quantity,
+                    total: tier.price * quantity,
+                }
+            })
+
+        if (selectedTiersPayload.length === 0) {
+            setBookingError('Please select at least one ticket tier.')
+            return
+        }
+
+        try {
+            const res = await createBooking({
+                eventId: event._id,
+                selectedTiers: selectedTiersPayload,
+            }).unwrap()
+
+            const rawData = res.data
+            const bookingList = Array.isArray(rawData) ? rawData : [rawData]
+
+            const summaryData = {
+                bookings: bookingList,
+                tierSummary: bookingList
+                    .map((b) => `${b.tierName} × ${b.bookedQty}`)
+                    .join(', '),
+                totalAmount: bookingList.reduce(
+                    (sum, b) => sum + (b.totalAmount || 0),
+                    0,
+                ),
+                bookingStatus: bookingList[0]?.bookingStatus || 'request_sent',
+                paymentStatus: bookingList[0]?.paymentStatus || 'not_paid',
+            }
+
+            setConfirmedBookingData(summaryData)
+            setBookingSuccessModal(true)
+            setSelectedQuantities({})
+        } catch (err) {
+            setBookingError(
+                err?.data?.message ||
+                    err?.error ||
+                    'Unable to complete booking reservation. Please try again.',
+            )
+        }
+    }
+
+    const handlePayWithRazorpay = async () => {
+        if (!confirmedBookingData?.bookings?.length) return
+
+        const primaryBooking = confirmedBookingData.bookings[0]
+
+        const isLoaded = await loadRazorpayScript()
+        if (!isLoaded) {
+            alert(
+                'Razorpay SDK failed to load. Please check your internet connection.',
+            )
+            return
+        }
+
+        try {
+            // 1. Request Order ID & Public Key from server
+            const orderRes = await createRazorpayOrder(
+                primaryBooking._id,
+            ).unwrap()
+
+            // 2. Configure Razorpay modal
+            const options = {
+                key: orderRes.keyId,
+                amount: orderRes.amount,
+                currency: orderRes.currency,
+                name: 'EventPass',
+                description: `Pass for ${event?.title || 'Event'}`,
+                order_id: orderRes.orderId,
+                prefill: {
+                    name: userInfo?.userName || '',
+                    email: userInfo?.email || '',
+                    contact: userInfo?.phone || '',
+                },
+                theme: {
+                    color: '#6366f1',
+                },
+                modal: {
+                    ondismiss: function () {
+                        // User dismissed modal without completing payment
+                    },
+                },
+                handler: async function (response) {
+                    // 3. Signature verification
+                    try {
+                        await verifyRazorpayPayment({
+                            bookingId: primaryBooking._id,
+                            paymentData: {
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id:
+                                    response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature,
+                            },
+                        }).unwrap()
+
+                        // 4. Update modal state
+                        setConfirmedBookingData((prev) => ({
+                            ...prev,
+                            bookingStatus: 'confirmed',
+                            paymentStatus: 'paid',
+                        }))
+                    } catch (verifyErr) {
+                        alert(
+                            verifyErr?.data?.message ||
+                                'Payment verification failed. Please contact support.',
+                        )
+                    }
+                },
+            }
+
+            const razorpayWindow = new window.Razorpay(options)
+            razorpayWindow.open()
+        } catch (err) {
+            alert(err?.data?.message || 'Could not initiate Razorpay checkout.')
         }
     }
 
@@ -143,68 +306,6 @@ const EventDetails = () => {
     const estimatedTax = Math.round(subtotal * (ticketGSTRate / 100))
     const grandTotal = subtotal + estimatedTax
 
-    const handleProceedToCheckout = async () => {
-        setBookingError(null)
-
-        if (!userInfo) {
-            navigate('/login')
-            return
-        }
-
-        const selectedTiersPayload = Object.entries(selectedQuantities)
-            .filter(([_, qty]) => qty > 0)
-            .map(([tierId, quantity]) => {
-                const tier = tiers.find((t) => t._id === tierId)
-                return {
-                    tierId,
-                    name: tier.name,
-                    unitPrice: tier.price,
-                    quantity,
-                    total: tier.price * quantity,
-                }
-            })
-
-        if (selectedTiersPayload.length === 0) {
-            setBookingError('Please select at least one ticket tier.')
-            return
-        }
-
-        try {
-            const res = await createBooking({
-                eventId: event._id,
-                selectedTiers: selectedTiersPayload,
-                paymentMode: 'upi',
-            }).unwrap()
-
-            // Normalize response: handle both single object and array of bookings
-            const rawData = res.data
-            const bookingList = Array.isArray(rawData) ? rawData : [rawData]
-
-            const summaryData = {
-                bookings: bookingList,
-                tierSummary: bookingList
-                    .map((b) => `${b.tierName} × ${b.bookedQty}`)
-                    .join(', '),
-                totalAmount: bookingList.reduce(
-                    (sum, b) => sum + (b.totalAmount || 0),
-                    0,
-                ),
-                bookingStatus: bookingList[0]?.bookingStatus || 'request_sent',
-                paymentStatus: bookingList[0]?.paymentStatus || 'not_paid',
-            }
-
-            setConfirmedBookingData(summaryData)
-            setBookingSuccessModal(true)
-            setSelectedQuantities({})
-        } catch (err) {
-            setBookingError(
-                err?.data?.message ||
-                    err?.error ||
-                    'Unable to complete booking reservation. Please try again.',
-            )
-        }
-    }
-
     return (
         <div className='max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-12'>
             {/* Top Breadcrumb Link */}
@@ -214,9 +315,9 @@ const EventDetails = () => {
             >
                 <ArrowLeft className='w-3.5 h-3.5' /> Back to Events
             </Link>
+
             {/* ================= HERO HEADER & POSTER ================= */}
             <div className='grid grid-cols-1 lg:grid-cols-12 gap-8 items-start'>
-                {/* Left: Poster Image */}
                 <div className='lg:col-span-5 rounded-3xl overflow-hidden border border-base-content/10 bg-base-100 shadow-2xl'>
                     <div className='relative aspect-[4/3] sm:aspect-square bg-base-300'>
                         <img
@@ -233,7 +334,6 @@ const EventDetails = () => {
                     </div>
                 </div>
 
-                {/* Right: Event Info */}
                 <div className='lg:col-span-7 space-y-6'>
                     <div className='space-y-3'>
                         <div className='flex flex-wrap items-center gap-3'>
@@ -334,9 +434,9 @@ const EventDetails = () => {
                     </div>
                 </div>
             </div>
+
             {/* ================= TICKET TIER SELECTOR & SUMMARY ================= */}
             <div className='grid grid-cols-1 lg:grid-cols-12 gap-8 items-start pt-6 border-t border-base-content/10'>
-                {/* Tier Selection Cards (Left: 7 Cols) */}
                 <div className='lg:col-span-7 space-y-4'>
                     <div className='flex items-center gap-2'>
                         <Ticket className='w-5 h-5 text-primary' />
@@ -432,7 +532,7 @@ const EventDetails = () => {
                     </div>
                 </div>
 
-                {/* Order Summary Box (Right: 5 Cols) */}
+                {/* Order Summary Box */}
                 <div className='lg:col-span-5 bg-base-100 border border-base-content/10 rounded-3xl p-6 shadow-xl space-y-6 sticky top-24'>
                     <h3 className='text-lg font-bold text-base-content border-b border-base-content/10 pb-3'>
                         Booking Summary
@@ -530,11 +630,11 @@ const EventDetails = () => {
                     </div>
                 </div>
             </div>
+
             {/* ================= DYNAMIC SUCCESS & RESERVATION MODAL ================= */}
             {bookingSuccessModal && confirmedBookingData && (
                 <div className='modal modal-open bg-black/70 backdrop-blur-sm z-50'>
                     <div className='modal-box max-w-md bg-base-100 border border-base-content/10 rounded-3xl p-6 text-center space-y-4 shadow-2xl'>
-                        {/* Status Icon */}
                         <div
                             className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto shadow-inner ${
                                 confirmedBookingData.paymentStatus === 'paid'
@@ -549,7 +649,6 @@ const EventDetails = () => {
                             )}
                         </div>
 
-                        {/* Dynamic Title & Description */}
                         <div>
                             <h3 className='text-2xl font-black text-base-content'>
                                 {confirmedBookingData.paymentStatus === 'paid'
@@ -559,11 +658,10 @@ const EventDetails = () => {
                             <p className='text-xs text-base-content/70 mt-1 leading-relaxed'>
                                 {confirmedBookingData.paymentStatus === 'paid'
                                     ? 'Your payment has been verified and anti-passback entry pass is ready.'
-                                    : 'Your seats are locked. Please submit payment proof to generate your QR entry pass.'}
+                                    : 'Your seats are locked. Pay now via Razorpay to instantly receive your digital entry pass.'}
                             </p>
                         </div>
 
-                        {/* Document Details */}
                         <div className='p-4 rounded-2xl bg-base-200 border border-base-content/10 text-left space-y-2 text-xs'>
                             <div className='flex justify-between items-center'>
                                 <span className='text-base-content/60'>
@@ -629,30 +727,57 @@ const EventDetails = () => {
 
                         {/* Action Buttons */}
                         <div className='pt-2 flex flex-col gap-2'>
-                            <button
-                                onClick={() => navigate('/my-bookings')}
-                                className='btn btn-primary w-full rounded-xl font-bold gap-2 shadow-md shadow-primary/20'
-                            >
-                                {confirmedBookingData.paymentStatus ===
-                                'paid' ? (
-                                    <>
-                                        <QrCode className='w-4 h-4' /> View My
-                                        Entry Pass
-                                    </>
-                                ) : (
-                                    <>
-                                        <Ticket className='w-4 h-4' /> Submit
-                                        Payment & View Bookings
-                                    </>
-                                )}
-                            </button>
+                            {confirmedBookingData.paymentStatus === 'paid' ? (
+                                <button
+                                    onClick={() => navigate('/my-bookings')}
+                                    className='btn btn-primary w-full rounded-xl font-bold gap-2 shadow-md shadow-primary/20'
+                                >
+                                    <QrCode className='w-4 h-4' /> View My Entry
+                                    Pass
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={handlePayWithRazorpay}
+                                        disabled={
+                                            isCreatingOrder ||
+                                            isVerifyingPayment
+                                        }
+                                        className='btn btn-primary w-full rounded-xl font-bold gap-2 shadow-md shadow-primary/20'
+                                    >
+                                        {isCreatingOrder ||
+                                        isVerifyingPayment ? (
+                                            <>
+                                                <Loader2 className='w-4 h-4 animate-spin' />
+                                                <span>
+                                                    Opening Razorpay Gateway...
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CreditCard className='w-4 h-4' />{' '}
+                                                Pay Now (UPI / Card /
+                                                NetBanking)
+                                            </>
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={() => navigate('/my-bookings')}
+                                        className='btn btn-ghost w-full rounded-xl text-xs text-base-content/70'
+                                    >
+                                        Pay Later / Submit Offline Proof in
+                                        Bookings
+                                    </button>
+                                </>
+                            )}
 
                             <button
                                 onClick={() => {
                                     setBookingSuccessModal(false)
                                     setConfirmedBookingData(null)
                                 }}
-                                className='btn btn-ghost w-full rounded-xl text-xs text-base-content/60'
+                                className='btn btn-ghost btn-xs w-full rounded-xl text-[11px] text-base-content/40'
                             >
                                 Close & Keep Browsing
                             </button>
@@ -660,6 +785,7 @@ const EventDetails = () => {
                     </div>
                 </div>
             )}
+
             {/* ================= REVIEWS SECTION ================= */}
             <div className='pt-8 border-t border-base-content/10 space-y-8'>
                 <div className='flex flex-col sm:flex-row sm:items-center justify-between gap-3'>
@@ -698,7 +824,6 @@ const EventDetails = () => {
                 </div>
 
                 <div className='grid grid-cols-1 lg:grid-cols-12 gap-8 items-start'>
-                    {/* Review List */}
                     <div className='lg:col-span-7 space-y-4'>
                         {loadingReviews ? (
                             <div className='flex items-center justify-center py-10 text-base-content/50 gap-2'>
@@ -767,7 +892,6 @@ const EventDetails = () => {
                         )}
                     </div>
 
-                    {/* Review Form Box */}
                     <div className='lg:col-span-5 bg-base-100 border border-base-content/10 rounded-3xl p-6 shadow-xl space-y-4'>
                         <div className='border-b border-base-content/10 pb-3'>
                             <h3 className='text-base font-bold text-base-content'>

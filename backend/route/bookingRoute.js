@@ -17,6 +17,8 @@ import {
     verifyGateEntry,
     submitPaymentDetails,
     approvePaymentAndConfirm,
+    createRazorpayOrder,
+    verifyRazorpayPayment,
 } from '../controller/bookingController.js'
 import { protect, restrictTo } from '../middleware/appMiddleware.js'
 
@@ -91,5 +93,9 @@ router.put(
     restrictTo('admin', 'organizer'),
     approvePaymentAndConfirm,
 )
-
+// =========================================================================
+// Razorpay Online Gateway Endpoints
+// =========================================================================
+router.post('/:id/create-razorpay-order', protect, createRazorpayOrder)
+router.post('/:id/verify-razorpay-payment', protect, verifyRazorpayPayment)
 export default router

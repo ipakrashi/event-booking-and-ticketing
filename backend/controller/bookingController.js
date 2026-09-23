@@ -4,8 +4,17 @@ import asyncHandler from 'express-async-handler'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
 import QRCode from 'qrcode'
+import Razorpay from 'razorpay'
 import Event from '../model/event.js'
 import Booking from '../model/booking.js'
+
+// Initialize instance using test credentials from .env
+const getRazorpayInstance = () => {
+    return new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET,
+    })
+}
 
 // =========================================================================
 // @desc :    Create New Booking(s) in 'request_sent' & 'not_paid' status
@@ -1142,5 +1151,123 @@ export const approvePaymentAndConfirm = asyncHandler(async (req, res) => {
         success: true,
         message: 'Payment confirmed and Entry Pass token activated',
         data: updated,
+    })
+})
+
+// =========================================================================
+// @desc :    Create Razorpay Order for a Booking
+// @route:    POST /api/bookings/:id/create-razorpay-order
+// @access:   Private (Booking Owner)
+// =========================================================================
+export const createRazorpayOrder = asyncHandler(async (req, res) => {
+    const { id } = req.params
+
+    const booking = await Booking.findById(id).populate('event', 'title')
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    // Ownership Guard
+    if (booking.user.toString() !== req.user._id.toString()) {
+        res.status(403)
+        throw new Error('Not authorized to pay for this booking')
+    }
+
+    if (booking.paymentStatus === 'paid') {
+        res.status(400)
+        throw new Error('This booking is already paid')
+    }
+
+    const instance = getRazorpayInstance()
+
+    // Razorpay accepts amounts in paise (₹1 = 100 paise)
+    const options = {
+        amount: Math.round(booking.totalAmount * 100),
+        currency: 'INR',
+        receipt: `rcpt_${booking._id.toString().slice(-8)}`, // Max 40 chars
+        notes: {
+            bookingId: booking._id.toString(),
+            eventTitle: booking.event?.title || 'Event Ticket',
+        },
+    }
+
+    const order = await instance.orders.create(options)
+
+    // Save order ID on paymentDetails for reconciliation tracking
+    booking.paymentDetails = {
+        mode: 'card', // updated dynamically on confirmation
+        trxnId: order.id,
+    }
+    await booking.save()
+
+    res.status(200).json({
+        success: true,
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID, // Send public key to browser
+        booking,
+    })
+})
+
+// =========================================================================
+// @desc :    Verify Razorpay Payment Signature & Confirm Booking
+// @route:    POST /api/bookings/:id/verify-razorpay-payment
+// @access:   Private (Booking Owner)
+// =========================================================================
+export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+        req.body
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        res.status(400)
+        throw new Error('Incomplete payment response from gateway')
+    }
+
+    const booking = await Booking.findById(id).populate('event', 'title')
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    // ---------------------------------------------------------------------
+    // The Cryptographic Handshake:
+    // Generate HMAC-SHA256 digest of `${order_id}|${payment_id}`
+    // using your private RAZORPAY_KEY_SECRET.
+    // ---------------------------------------------------------------------
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`
+    const expectedSignature = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(body.toString())
+        .digest('hex')
+
+    const isAuthentic = expectedSignature === razorpay_signature
+
+    if (!isAuthentic) {
+        res.status(400)
+        throw new Error('Payment verification failed: Signature mismatch.')
+    }
+
+    // Mathematical match confirmed -> Transition state to Confirmed & Paid
+    booking.paymentStatus = 'paid'
+    booking.bookingStatus = 'confirmed'
+    booking.paymentDetails = {
+        mode: 'upi', // Captured via gateway
+        trxnId: razorpay_payment_id,
+    }
+
+    // Issue anti-passback token if not already generated
+    if (!booking.entryPassToken) {
+        booking.entryPassToken = crypto.randomBytes(32).toString('hex')
+    }
+
+    const updatedBooking = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message: 'Payment confirmed successfully. Your digital pass is active!',
+        data: updatedBooking,
     })
 })

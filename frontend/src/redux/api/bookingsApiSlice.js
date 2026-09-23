@@ -88,6 +88,21 @@ export const bookingsApiSlice = apiSlice.injectEndpoints({
                 { type: 'ShippingLabel', id },
             ],
         }),
+        createRazorpayOrder: builder.mutation({
+            query: (bookingId) => ({
+                url: `/api/bookings/${bookingId}/create-razorpay-order`,
+                method: 'POST',
+            }),
+            invalidatesTags: ['Booking'],
+        }),
+        verifyRazorpayPayment: builder.mutation({
+            query: ({ bookingId, paymentData }) => ({
+                url: `/api/bookings/${bookingId}/verify-razorpay-payment`,
+                method: 'POST',
+                body: paymentData,
+            }),
+            invalidatesTags: ['Booking', 'EntryPass'],
+        }),
     }),
 })
 
@@ -104,4 +119,6 @@ export const {
     useVerifyGateEntryMutation,
     useUpdateDispatchStatusMutation,
     useGetShippingLabelQuery,
+    useCreateRazorpayOrderMutation,
+    useVerifyRazorpayPaymentMutation,
 } = bookingsApiSlice

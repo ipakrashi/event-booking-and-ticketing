@@ -18,6 +18,7 @@ import venueRoute from './route/venueRoute.js'
 import bannerRoute from './route/bannerRoute.js'
 import newsletterRoute from './route/newsletterRoute.js'
 import courierRoutes from './route/courierRoute.js'
+import paymentMethodRoutes from './route/paymentMethodRoute.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -50,6 +51,7 @@ app.use('/api/venues', venueRoute)
 app.use('/api/banners', bannerRoute)
 app.use('/api/newsletter', newsletterRoute)
 app.use('/api/couriers', courierRoutes)
+app.use('/api/payment-methods', paymentMethodRoutes)
 
 // Production Static Serving
 // Express 5 compatible catch-all:

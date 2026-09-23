@@ -7,7 +7,11 @@ import {
     useRequestRefundMutation,
     useGetEntryPassQuery,
     useSubmitPaymentDetailsMutation,
+    useCreateRazorpayOrderMutation,
+    useVerifyRazorpayPaymentMutation,
 } from '../redux/api/bookingsApiSlice'
+import { useGetPaymentMethodsQuery } from '../redux/api/paymentMethodsApiSlice'
+
 import {
     Ticket,
     Calendar,
@@ -103,13 +107,24 @@ const QrModal = ({ bookingId, onClose }) => {
 }
 
 const MyBookingsScreen = () => {
+    // -------------------------------------------------------------------------
+    // 1. ALL HOOK DECLARATIONS AT TOP LEVEL (Strict React Rule of Hooks)
+    // -------------------------------------------------------------------------
     const { data, isLoading, error } = useGetMyBookingsQuery()
     const bookings = data?.data || []
+
+    const { data: methodsData, isLoading: loadingMethods } =
+        useGetPaymentMethodsQuery()
+    const paymentMethods = methodsData?.data || []
 
     const [requestRefund, { isLoading: isRefunding }] =
         useRequestRefundMutation()
     const [submitPayment, { isLoading: isSubmittingPay }] =
         useSubmitPaymentDetailsMutation()
+    const [createRazorpayOrder, { isLoading: isCreatingOrder }] =
+        useCreateRazorpayOrderMutation()
+    const [verifyRazorpayPayment, { isLoading: isVerifyingPayment }] =
+        useVerifyRazorpayPaymentMutation()
 
     // Modal UI states
     const [selectedBookingForQr, setSelectedBookingForQr] = useState(null)
@@ -118,8 +133,86 @@ const MyBookingsScreen = () => {
 
     // Payment proof modal states
     const [paymentModalBooking, setPaymentModalBooking] = useState(null)
-    const [payMode, setPayMode] = useState('upi')
+    const [payMode, setPayMode] = useState('razorpay')
     const [payTrxnId, setPayTrxnId] = useState('')
+
+    // -------------------------------------------------------------------------
+    // 2. HELPER FUNCTIONS & EVENT HANDLERS
+    // -------------------------------------------------------------------------
+    const loadRazorpayScript = () => {
+        return new Promise((resolve) => {
+            if (window.Razorpay) {
+                resolve(true)
+                return
+            }
+            const script = document.createElement('script')
+            script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+            script.onload = () => resolve(true)
+            script.onerror = () => resolve(false)
+            document.body.appendChild(script)
+        })
+    }
+
+    const handleRazorpayFromBookings = async (booking) => {
+        const isLoaded = await loadRazorpayScript()
+        if (!isLoaded) {
+            alert(
+                'Razorpay SDK failed to load. Please check your internet connection.',
+            )
+            return
+        }
+
+        try {
+            const orderRes = await createRazorpayOrder(booking._id).unwrap()
+
+            const options = {
+                key: orderRes.keyId,
+                amount: orderRes.amount,
+                currency: orderRes.currency,
+                name: 'EventPass',
+                description: `Tickets for ${booking.event?.title || 'Event'}`,
+                order_id: orderRes.orderId,
+                prefill: {
+                    name: booking.user?.userName || '',
+                    email: booking.user?.email || '',
+                    contact: booking.user?.phone || '',
+                },
+                theme: {
+                    color: '#6366f1',
+                },
+                modal: {
+                    ondismiss: function () {
+                        // User dismissed modal
+                    },
+                },
+                handler: async function (response) {
+                    try {
+                        await verifyRazorpayPayment({
+                            bookingId: booking._id,
+                            paymentData: {
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id:
+                                    response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature,
+                            },
+                        }).unwrap()
+
+                        setPaymentModalBooking(null)
+                    } catch (verifyErr) {
+                        alert(
+                            verifyErr?.data?.message ||
+                                'Payment verification failed.',
+                        )
+                    }
+                },
+            }
+
+            const rzp = new window.Razorpay(options)
+            rzp.open()
+        } catch (err) {
+            alert(err?.data?.message || 'Could not initiate Razorpay order.')
+        }
+    }
 
     const handleCancelSubmit = async (e) => {
         e.preventDefault()
@@ -155,6 +248,9 @@ const MyBookingsScreen = () => {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // 3. CONDITIONAL RENDERING (Guards run AFTER all hooks are evaluated)
+    // -------------------------------------------------------------------------
     if (isLoading) {
         return (
             <div className='min-h-[60vh] flex flex-col items-center justify-center gap-3'>
@@ -228,14 +324,12 @@ const MyBookingsScreen = () => {
                             'rejected',
                         ].includes(b.bookingStatus)
 
-                        // Digital Entry Pass: accessible when paid, confirmed, and dispatched or received
                         const isPassAccessible =
                             b.paymentStatus === 'paid' &&
                             b.bookingStatus === 'confirmed' &&
                             (b.despatchStatus === 'dispatched' ||
                                 b.despatchStatus === 'received')
 
-                        // Paid Refund Eligibility: Paid, confirmed, not dispatched, event not started/locked, not in terminal state
                         const canRequestRefund =
                             b.paymentStatus === 'paid' &&
                             b.bookingStatus === 'confirmed' &&
@@ -244,7 +338,6 @@ const MyBookingsScreen = () => {
                             !isEventStatusLocked &&
                             !isTerminalBooking
 
-                        // Unpaid Cancellation Eligibility: Reservation can be released immediately if event hasn't started
                         const canCancelUnpaid =
                             b.paymentStatus === 'not_paid' &&
                             !isTerminalBooking &&
@@ -337,7 +430,6 @@ const MyBookingsScreen = () => {
                                     </div>
                                 </div>
 
-                                {/* Status Indicators */}
                                 <div className='space-y-1.5 text-xs'>
                                     <div className='flex items-center justify-between text-[11px] opacity-70'>
                                         <span>Booking State:</span>
@@ -357,23 +449,25 @@ const MyBookingsScreen = () => {
                                     </div>
                                 </div>
 
-                                {/* Action Buttons */}
                                 <div className='pt-2 border-t border-base-content/10 flex flex-wrap items-center justify-between gap-2'>
-                                    {/* Unpaid Booking: Enter Offline Payment Proof */}
                                     {b.paymentStatus === 'not_paid' &&
                                         !isTerminalBooking && (
                                             <button
-                                                onClick={() =>
+                                                onClick={() => {
                                                     setPaymentModalBooking(b)
-                                                }
+                                                    setPayMode(
+                                                        paymentMethods[0]
+                                                            ?.code ||
+                                                            'razorpay',
+                                                    )
+                                                }}
                                                 className='btn btn-sm btn-primary rounded-xl font-bold gap-1.5 flex-1'
                                             >
                                                 <CreditCard className='w-4 h-4' />{' '}
-                                                Submit Payment Proof
+                                                Complete Payment
                                             </button>
                                         )}
 
-                                    {/* Awaiting Admin Approval */}
                                     {b.paymentStatus ===
                                         'pending_verification' && (
                                         <div className='flex items-center gap-1.5 text-[11px] text-info bg-info/10 px-3 py-2 rounded-xl flex-1'>
@@ -385,7 +479,6 @@ const MyBookingsScreen = () => {
                                         </div>
                                     )}
 
-                                    {/* Paid: Entry Pass Accessible vs Locked pending dispatch */}
                                     {b.paymentStatus === 'paid' &&
                                         (isPassAccessible ? (
                                             <button
@@ -409,7 +502,6 @@ const MyBookingsScreen = () => {
                                             </div>
                                         ))}
 
-                                    {/* Cancellation Actions */}
                                     {canRequestRefund && (
                                         <button
                                             onClick={() =>
@@ -434,7 +526,6 @@ const MyBookingsScreen = () => {
                                         </button>
                                     )}
 
-                                    {/* Window Closed Indicator */}
                                     {(isEventStartedOrPast ||
                                         isEventStatusLocked) &&
                                         !isTerminalBooking && (
@@ -462,12 +553,12 @@ const MyBookingsScreen = () => {
                 />
             )}
 
-            {/* Attendee Offline Payment Submission Modal */}
+            {/* Dynamic Payment Modal */}
             {paymentModalBooking && (
                 <div className='modal modal-open bg-black/60 backdrop-blur-sm z-50'>
                     <div className='modal-box rounded-3xl max-w-sm p-6 space-y-4'>
                         <h3 className='font-bold text-base text-base-content'>
-                            Submit Payment Proof
+                            Complete Ticket Payment
                         </h3>
                         <p className='text-xs opacity-70'>
                             Event:{' '}
@@ -492,62 +583,114 @@ const MyBookingsScreen = () => {
                                 <label className='text-[11px] font-bold block mb-1'>
                                     Payment Method
                                 </label>
-                                <select
-                                    value={payMode}
-                                    onChange={(e) => setPayMode(e.target.value)}
-                                    className='select select-sm select-bordered w-full rounded-xl text-xs'
-                                >
-                                    <option value='upi'>
-                                        UPI (GPay / PhonePe / Paytm / BHIM)
-                                    </option>
-                                    <option value='bank_transfer'>
-                                        Bank Transfer (IMPS / NEFT / RTGS)
-                                    </option>
-                                    <option value='cash'>
-                                        Direct Cash at Venue Counter
-                                    </option>
-                                </select>
+                                {loadingMethods ? (
+                                    <div className='flex items-center gap-2 py-2 text-xs opacity-50'>
+                                        <Loader2 className='w-3 h-3 animate-spin' />{' '}
+                                        Loading methods...
+                                    </div>
+                                ) : (
+                                    <select
+                                        value={payMode}
+                                        onChange={(e) =>
+                                            setPayMode(e.target.value)
+                                        }
+                                        className='select select-sm select-bordered w-full rounded-xl text-xs font-semibold'
+                                    >
+                                        {paymentMethods.map((m) => (
+                                            <option key={m._id} value={m.code}>
+                                                {m.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
 
-                            <div>
-                                <label className='text-[11px] font-bold block mb-1'>
-                                    Transaction / UTR Reference ID
-                                </label>
-                                <input
-                                    type='text'
-                                    required
-                                    placeholder='e.g. 428901849204 or UTR number'
-                                    value={payTrxnId}
-                                    onChange={(e) =>
-                                        setPayTrxnId(e.target.value)
-                                    }
-                                    className='input input-sm input-bordered w-full rounded-xl font-mono text-xs'
-                                />
-                            </div>
+                            {/* Conditional View: Online Gateway vs Offline Proof */}
+                            {payMode === 'razorpay' ? (
+                                <div className='pt-2 space-y-2'>
+                                    <button
+                                        type='button'
+                                        onClick={() =>
+                                            handleRazorpayFromBookings(
+                                                paymentModalBooking,
+                                            )
+                                        }
+                                        disabled={
+                                            isCreatingOrder ||
+                                            isVerifyingPayment
+                                        }
+                                        className='btn btn-sm btn-primary w-full rounded-xl font-bold gap-2 shadow-md shadow-primary/20'
+                                    >
+                                        {isCreatingOrder ||
+                                        isVerifyingPayment ? (
+                                            <>
+                                                <Loader2 className='w-3.5 h-3.5 animate-spin' />
+                                                <span>Opening Razorpay...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CreditCard className='w-4 h-4' />{' '}
+                                                Pay ₹
+                                                {
+                                                    paymentModalBooking.totalAmount
+                                                }{' '}
+                                                via Razorpay
+                                            </>
+                                        )}
+                                    </button>
+                                    <button
+                                        type='button'
+                                        onClick={() =>
+                                            setPaymentModalBooking(null)
+                                        }
+                                        className='btn btn-sm btn-ghost w-full rounded-xl'
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div>
+                                        <label className='text-[11px] font-bold block mb-1'>
+                                            Transaction / UTR Reference ID
+                                        </label>
+                                        <input
+                                            type='text'
+                                            required
+                                            placeholder='e.g. 428901849204 or UTR number'
+                                            value={payTrxnId}
+                                            onChange={(e) =>
+                                                setPayTrxnId(e.target.value)
+                                            }
+                                            className='input input-sm input-bordered w-full rounded-xl font-mono text-xs'
+                                        />
+                                    </div>
 
-                            <div className='modal-action pt-2'>
-                                <button
-                                    type='button'
-                                    onClick={() => setPaymentModalBooking(null)}
-                                    className='btn btn-sm btn-ghost rounded-xl'
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type='submit'
-                                    disabled={isSubmittingPay}
-                                    className='btn btn-sm btn-primary rounded-xl font-bold gap-1'
-                                >
-                                    {isSubmittingPay ? (
-                                        <>
-                                            <Loader2 className='w-3.5 h-3.5 animate-spin' />
-                                            Submitting...
-                                        </>
-                                    ) : (
-                                        'Submit Details'
-                                    )}
-                                </button>
-                            </div>
+                                    <div className='modal-action pt-2'>
+                                        <button
+                                            type='button'
+                                            onClick={() =>
+                                                setPaymentModalBooking(null)
+                                            }
+                                            className='btn btn-sm btn-ghost rounded-xl'
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type='submit'
+                                            disabled={
+                                                isSubmittingPay ||
+                                                !payTrxnId.trim()
+                                            }
+                                            className='btn btn-sm btn-primary rounded-xl font-bold gap-1'
+                                        >
+                                            {isSubmittingPay
+                                                ? 'Submitting...'
+                                                : 'Submit Details'}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </form>
                     </div>
                 </div>
