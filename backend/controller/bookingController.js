@@ -927,7 +927,7 @@ export const getDigitalEntryPass = asyncHandler(async (req, res) => {
 })
 
 // =========================================================================
-// @desc :    Verify Entry Pass at Gate Scanner (Anti-Passback)
+// @desc :    Verify Entry Pass at Gate Scanner (Anti-Passback + Event-Day Guard)
 // @route:    POST /api/bookings/verify-entry
 // @access:   Private (Admin / Event Staff / Organizer)
 // =========================================================================
@@ -970,6 +970,53 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         )
     }
 
+    // -------------------------------------------------------------------------
+    // 1. Operational Event-Day Time Window Guard
+    // -------------------------------------------------------------------------
+    const now = new Date()
+    const eventStart = new Date(booking.event.startDate)
+    const eventEnd = new Date(booking.event.endDate)
+
+    // Format calendar dates using Indian Standard Time (Asia/Kolkata)
+    const eventDateStr = eventStart.toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    })
+    const todayStr = now.toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    })
+
+    // Allow entry on the calendar day of the event, or up to 3 hours prior to start time
+    const EARLY_ENTRY_BUFFER_MS = 3 * 60 * 60 * 1000
+    const earliestAllowedEntry = new Date(
+        eventStart.getTime() - EARLY_ENTRY_BUFFER_MS,
+    )
+
+    if (now < earliestAllowedEntry && todayStr !== eventDateStr) {
+        res.status(400)
+        throw new Error(
+            `Admission Denied: Pass is valid only on the day of the event (${eventDateStr}). Gates open 3 hours before start time.`,
+        )
+    }
+
+    if (now > eventEnd) {
+        res.status(400)
+        throw new Error(
+            `Admission Denied: Event concluded on ${eventEnd.toLocaleDateString(
+                'en-IN',
+                { timeZone: 'Asia/Kolkata' },
+            )}. This ticket pass has expired.`,
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Anti-Passback Guard
+    // -------------------------------------------------------------------------
     if (booking.isCheckedIn) {
         res.status(400)
         throw new Error(
@@ -979,8 +1026,11 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         )
     }
 
+    // -------------------------------------------------------------------------
+    // 3. Mark Checked In
+    // -------------------------------------------------------------------------
     booking.isCheckedIn = true
-    booking.checkInTimestamp = new Date()
+    booking.checkInTimestamp = now
     booking.checkedInBy = req.user._id
 
     const admittedBooking = await booking.save()
@@ -998,6 +1048,7 @@ export const verifyGateEntry = asyncHandler(async (req, res) => {
         },
     })
 })
+
 // =========================================================================
 // @desc :    Attendee Submits Offline Payment Proof / UTR Reference
 // @route:    PUT /api/bookings/:id/submit-payment

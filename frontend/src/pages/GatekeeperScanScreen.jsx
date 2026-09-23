@@ -16,6 +16,7 @@ import {
     VolumeX,
     Keyboard,
     Send,
+    Clock,
 } from 'lucide-react'
 import { useVerifyGateEntryMutation } from '../redux/api/bookingsApiSlice'
 
@@ -124,10 +125,19 @@ const GatekeeperScanScreen = () => {
                 err?.data?.message ||
                 err?.error ||
                 'Ticket validation failed or unrecognized pass.'
-            const isAlreadyScanned = errMsg.toLowerCase().includes('already')
+            const lowerMsg = errMsg.toLowerCase()
+            const isAlreadyScanned = lowerMsg.includes('already')
+            const isEarlyOrExpired =
+                lowerMsg.includes('gates are closed') ||
+                lowerMsg.includes('only on the day') ||
+                lowerMsg.includes('expired')
 
             setScanResult({
-                status: isAlreadyScanned ? 'warning' : 'danger',
+                status: isAlreadyScanned
+                    ? 'warning'
+                    : isEarlyOrExpired
+                      ? 'info'
+                      : 'danger',
                 message: errMsg,
                 data: null,
             })
@@ -355,7 +365,9 @@ const GatekeeperScanScreen = () => {
                             ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-100'
                             : scanResult.status === 'warning'
                               ? 'bg-amber-950/40 border-amber-500/50 text-amber-100'
-                              : 'bg-rose-950/40 border-rose-500/50 text-rose-100'
+                              : scanResult.status === 'info'
+                                ? 'bg-sky-950/40 border-sky-500/50 text-sky-100'
+                                : 'bg-rose-950/40 border-rose-500/50 text-rose-100'
                     }`}
                 >
                     <div className='flex items-start gap-3'>
@@ -364,6 +376,9 @@ const GatekeeperScanScreen = () => {
                         )}
                         {scanResult.status === 'warning' && (
                             <AlertTriangle className='w-7 h-7 text-amber-400 shrink-0 mt-0.5' />
+                        )}
+                        {scanResult.status === 'info' && (
+                            <Clock className='w-7 h-7 text-sky-400 shrink-0 mt-0.5' />
                         )}
                         {scanResult.status === 'danger' && (
                             <XCircle className='w-7 h-7 text-rose-400 shrink-0 mt-0.5' />
@@ -377,14 +392,18 @@ const GatekeeperScanScreen = () => {
                                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                             : scanResult.status === 'warning'
                                               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                              : scanResult.status === 'info'
+                                                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                                     }`}
                                 >
                                     {scanResult.status === 'success'
                                         ? 'ADMITTED'
                                         : scanResult.status === 'warning'
                                           ? 'ANTI-PASSBACK ALERT'
-                                          : 'REJECTED'}
+                                          : scanResult.status === 'info'
+                                            ? 'ENTRY WINDOW CLOSED'
+                                            : 'REJECTED'}
                                 </span>
                             </div>
 
