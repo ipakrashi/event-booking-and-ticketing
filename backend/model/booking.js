@@ -101,6 +101,11 @@ const bookingSchema = new mongoose.Schema(
                 trim: true,
                 default: null,
             },
+            refundId: {
+                type: String,
+                trim: true,
+                default: null, // Stores 'rfnd_...' from Razorpay
+            },
         },
         despatchStatus: {
             type: String,

@@ -1274,3 +1274,127 @@ export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
         data: updatedBooking,
     })
 })
+// =========================================================================
+// @desc :    Approve & Process Refund (Admin / Organizer)
+// @route:    PUT /api/bookings/:id/process-refund
+// @access:   Private (Admin / Event Organizer)
+// =========================================================================
+export const processRefundApproval = asyncHandler(async (req, res) => {
+    const { id } = req.params
+    const { action, adminRemarks } = req.body
+
+    const booking = await Booking.findById(id).populate(
+        'event',
+        'organizerId title',
+    )
+    if (!booking) {
+        res.status(404)
+        throw new Error('Booking not found')
+    }
+
+    const userRole = (req.user.role?.role || req.user.role || '').toLowerCase()
+    const isAdmin = userRole === 'admin'
+    const isOrganizer =
+        booking.event?.organizerId?.toString() === req.user._id.toString()
+
+    if (!isAdmin && !isOrganizer) {
+        res.status(403)
+        throw new Error('Not authorized to approve refunds for this event')
+    }
+
+    if (booking.bookingStatus !== 'refund_requested') {
+        res.status(400)
+        throw new Error(
+            `No active refund requested for this booking. Current status: ${booking.bookingStatus}`,
+        )
+    }
+
+    if (action === 'approve') {
+        let gatewayRefund = null
+        const isRazorpayPayment =
+            booking.paymentDetails?.trxnId &&
+            booking.paymentDetails.trxnId.startsWith('pay_')
+
+        // -----------------------------------------------------------------
+        // 1. Trigger Gateway Refund if paid online via Razorpay
+        // -----------------------------------------------------------------
+        if (isRazorpayPayment) {
+            try {
+                const instance = getRazorpayInstance()
+                const refundAmountPaise = Math.round(booking.refundAmount * 100)
+
+                gatewayRefund = await instance.payments.refund(
+                    booking.paymentDetails.trxnId,
+                    {
+                        amount: refundAmountPaise,
+                        speed: 'normal',
+                        notes: {
+                            bookingId: booking._id.toString(),
+                            eventTitle: booking.event?.title || 'Event Pass',
+                            adminRemarks:
+                                adminRemarks || 'Refund approved by organizer',
+                        },
+                    },
+                )
+            } catch (rzpErr) {
+                res.status(400)
+                throw new Error(
+                    `Razorpay Gateway Refund Failed: ${
+                        rzpErr?.error?.description ||
+                        rzpErr?.message ||
+                        'Unable to initiate gateway refund.'
+                    }`,
+                )
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 2. Restore Seat Inventory
+        // -----------------------------------------------------------------
+        await Event.updateOne(
+            { _id: booking.event._id, 'ticketTiers._id': booking.ticketTierId },
+            { $inc: { 'ticketTiers.$.soldQuantity': -booking.bookedQty } },
+        )
+
+        // -----------------------------------------------------------------
+        // 3. Update Booking State & Deactivate Entry Pass
+        // -----------------------------------------------------------------
+        booking.cancelledQty = booking.bookedQty
+        booking.bookingStatus = 'refund_issued'
+        booking.paymentStatus = 'refunded'
+
+        // Record Gateway Refund ID if returned
+        if (gatewayRefund?.id) {
+            booking.paymentDetails.refundId = gatewayRefund.id
+        }
+
+        // Invalidate pass token uniquely to prevent entry and index collisions
+        booking.entryPassToken = `REFUNDED_${booking._id}_${Date.now()}`
+
+        booking.cancellationReason = adminRemarks
+            ? `${booking.cancellationReason} | Remarks: ${adminRemarks}${
+                  gatewayRefund?.id ? ` (Refund ID: ${gatewayRefund.id})` : ''
+              }`
+            : booking.cancellationReason
+    } else if (action === 'reject') {
+        booking.bookingStatus = 'confirmed'
+        booking.paymentStatus = 'paid'
+        booking.cancellationReason = `Refund Rejected: ${
+            adminRemarks || 'Conditions not met'
+        }`
+    } else {
+        res.status(400)
+        throw new Error("Invalid action. Must be 'approve' or 'reject'")
+    }
+
+    const updated = await booking.save()
+
+    res.status(200).json({
+        success: true,
+        message:
+            action === 'approve'
+                ? 'Refund approved, inventory restored, and gateway reversal processed'
+                : 'Refund request rejected',
+        data: updated,
+    })
+})
