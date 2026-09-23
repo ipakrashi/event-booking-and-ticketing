@@ -514,7 +514,10 @@ export const processRefundApproval = asyncHandler(async (req, res) => {
         booking.cancelledQty = booking.bookedQty
         booking.bookingStatus = 'refund_issued'
         booking.paymentStatus = 'refunded'
-        booking.entryPassToken = null
+
+        // Invalidate pass token uniquely so it preserves uniqueness without index conflicts
+        booking.entryPassToken = `REFUNDED_${booking._id}_${Date.now()}`
+
         booking.cancellationReason = adminRemarks
             ? `${booking.cancellationReason} | Remarks: ${adminRemarks}`
             : booking.cancellationReason
