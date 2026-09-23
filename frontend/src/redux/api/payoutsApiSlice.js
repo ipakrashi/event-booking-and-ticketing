@@ -6,21 +6,21 @@ export const payoutsApiSlice = apiSlice.injectEndpoints({
     endpoints: (builder) => ({
         getAllPayouts: builder.query({
             query: (params) => ({
-                url: '/api/payouts/admin/all',
+                url: '/api/admin/payouts/all',
                 params,
             }),
             providesTags: ['Payout'],
         }),
         generateEventPayout: builder.mutation({
             query: (eventId) => ({
-                url: `/api/payouts/event/${eventId}/generate`,
+                url: `/api/admin/event/${eventId}/generate`,
                 method: 'POST',
             }),
             invalidatesTags: ['Payout', 'Event'],
         }),
         disbursePayoutTranche: builder.mutation({
             query: ({ payoutId, amount, mode, trxnId, notes }) => ({
-                url: `/api/payouts/${payoutId}/disburse`,
+                url: `/api/admin/${payoutId}/disburse`,
                 method: 'POST',
                 body: { amount, mode, trxnId, notes },
             }),

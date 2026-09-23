@@ -1,11 +1,12 @@
 // frontend/src/pages/admin/AdminPayoutsScreen.jsx
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
     useGenerateEventPayoutMutation,
     useDisbursePayoutTrancheMutation,
 } from '../../redux/api/payoutsApiSlice'
 import { useGetEventsQuery } from '../../redux/api/eventsApiSlice'
+import { useGetPaymentMethodsQuery } from '../../redux/api/paymentMethodsApiSlice'
 import {
     DollarSign,
     ShieldCheck,
@@ -13,10 +14,8 @@ import {
     AlertCircle,
     Loader2,
     CheckCircle2,
-    Building2,
     Calendar,
     Send,
-    FileSpreadsheet,
     History,
 } from 'lucide-react'
 
@@ -24,6 +23,9 @@ const AdminPayoutsScreen = () => {
     const [selectedEventId, setSelectedEventId] = useState('')
     const { data: eventsData } = useGetEventsQuery({ status: 'completed' })
     const completedEvents = eventsData?.data || []
+
+    const { data: paymentMethodsData } = useGetPaymentMethodsQuery()
+    const paymentMethods = paymentMethodsData?.data || []
 
     const [
         generatePayout,
@@ -33,9 +35,16 @@ const AdminPayoutsScreen = () => {
         useDisbursePayoutTrancheMutation()
 
     const [amount, setAmount] = useState('')
-    const [mode, setMode] = useState('bank_transfer')
+    const [mode, setMode] = useState('')
     const [trxnId, setTrxnId] = useState('')
     const [notes, setNotes] = useState('')
+
+    // Set initial mode once payment methods load
+    useEffect(() => {
+        if (paymentMethods.length > 0 && !mode) {
+            setMode(paymentMethods[0].code)
+        }
+    }, [paymentMethods, mode])
 
     const payout = payoutRes?.data
 
@@ -60,7 +69,7 @@ const AdminPayoutsScreen = () => {
                 payoutId: payout._id,
                 amount: Number(amount),
                 mode,
-                trxnId: trxnId.trim(),
+                trxnId: mode === 'razorpay' ? undefined : trxnId.trim(),
                 notes: notes.trim() || undefined,
             }).unwrap()
 
@@ -68,7 +77,7 @@ const AdminPayoutsScreen = () => {
             setTrxnId('')
             setNotes('')
             generatePayout(selectedEventId) // Refresh
-            alert('Disbursement recorded successfully!')
+            alert('Disbursement recorded & processed successfully!')
         } catch (err) {
             alert(err?.data?.message || 'Failed to record disbursement')
         }
@@ -252,7 +261,7 @@ const AdminPayoutsScreen = () => {
                                                         ({d.mode})
                                                     </span>
                                                     <span className='text-[10px] opacity-50 ml-2'>
-                                                        UTR: {d.trxnId}
+                                                        UTR/Ref: {d.trxnId}
                                                     </span>
                                                 </div>
                                                 <span className='text-[10px] opacity-50'>
@@ -325,34 +334,34 @@ const AdminPayoutsScreen = () => {
                                             }
                                             className='select select-sm select-bordered w-full rounded-xl text-xs'
                                         >
-                                            <option value='bank_transfer'>
-                                                Bank Transfer
-                                            </option>
-                                            <option value='upi'>UPI</option>
-                                            <option value='neft_rtgs'>
-                                                NEFT / RTGS
-                                            </option>
-                                            <option value='cheque'>
-                                                Cheque
-                                            </option>
+                                            {paymentMethods.map((pm) => (
+                                                <option
+                                                    key={pm._id}
+                                                    value={pm.code}
+                                                >
+                                                    {pm.name}
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
 
-                                    <div>
-                                        <label className='text-[11px] font-bold block mb-1'>
-                                            UTR / Transaction Reference
-                                        </label>
-                                        <input
-                                            type='text'
-                                            required
-                                            placeholder='e.g. UTR9283019283'
-                                            value={trxnId}
-                                            onChange={(e) =>
-                                                setTrxnId(e.target.value)
-                                            }
-                                            className='input input-sm input-bordered w-full rounded-xl text-xs font-mono'
-                                        />
-                                    </div>
+                                    {mode !== 'razorpay' && (
+                                        <div>
+                                            <label className='text-[11px] font-bold block mb-1'>
+                                                UTR / Transaction Reference
+                                            </label>
+                                            <input
+                                                type='text'
+                                                required
+                                                placeholder='e.g. UTR9283019283'
+                                                value={trxnId}
+                                                onChange={(e) =>
+                                                    setTrxnId(e.target.value)
+                                                }
+                                                className='input input-sm input-bordered w-full rounded-xl text-xs font-mono'
+                                            />
+                                        </div>
+                                    )}
 
                                     <div>
                                         <label className='text-[11px] font-bold block mb-1'>

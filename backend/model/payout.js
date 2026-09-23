@@ -9,7 +9,7 @@ const disbursementSchema = new mongoose.Schema(
         },
         mode: {
             type: String,
-            enum: ['bank_transfer', 'upi', 'cheque', 'neft_rtgs'],
+            enum: ['bank_transfer', 'upi', 'cheque', 'neft_rtgs', 'razorpay'],
             required: true,
         },
         trxnId: {
